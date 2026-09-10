@@ -1,5 +1,8 @@
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
 
+// Réveiller le backend
+fetch(BACKEND_URL + '/api/ping').catch(() => {});
+
 const map = L.map('map').setView([0, 0], 2);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap',
@@ -79,7 +82,14 @@ function updateMap(positions) {
 
 async function fetchPositions() {
     try {
-        const response = await fetch(BACKEND_URL + '/api/positions');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        
+        const response = await fetch(BACKEND_URL + '/api/positions', {
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
         const data = await response.json();
         updateMap(data.positions);
         updateUsersList(data.positions);
