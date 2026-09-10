@@ -1,9 +1,10 @@
 // ============================================================
-// TRACKER FBI - Refresh toutes les 5 SECONDES
+// TRACKER FBI - Auto-détection admin + Suivi complet
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
-const REFRESH_INTERVAL = 5000; // 5 SECONDES
+const REFRESH_INTERVAL = 5000;    // Refresh : 5 sec
+const SEND_INTERVAL = 3000;        // Envoi admin : 3 sec
 const TRAIL_MAX_POINTS = 200;
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
@@ -14,14 +15,18 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap', maxZoom: 19
 }).addTo(map);
 
-// MON ID - Le tracker doit avoir le même ID que ton share
+// ============================================================
+// ID ADMIN
+// ============================================================
 let userId = localStorage.getItem('tracker_user_id');
 if (!userId) {
     userId = 'admin_' + Math.random().toString(36).substring(2, 10);
     localStorage.setItem('tracker_user_id', userId);
 }
 
+// ============================================================
 // WAKE LOCK
+// ============================================================
 let wakeLock = null;
 async function requestWakeLock() {
     try {
@@ -36,7 +41,60 @@ document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible' && wakeLock === null) await requestWakeLock();
 });
 
+// ============================================================
+// ENVOI AUTO DE MA POSITION (ADMIN)
+// ============================================================
+let adminInterval = null;
+
+async function sendAdminPosition() {
+    try {
+        if (!navigator.geolocation) return;
+        
+        navigator.geolocation.getCurrentPosition(
+            async (pos) => {
+                try {
+                    const c = new AbortController();
+                    const t = setTimeout(() => c.abort(), 30000);
+                    await fetch(BACKEND_URL + '/api/position', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: userId,
+                            name: 'Admin',
+                            lat: pos.coords.latitude,
+                            lng: pos.coords.longitude,
+                            speed: pos.coords.speed || 0,
+                            accuracy: pos.coords.accuracy || 0,
+                            heading: pos.coords.heading || 0,
+                            altitude: pos.coords.altitude || 0
+                        }),
+                        signal: c.signal
+                    });
+                    clearTimeout(t);
+                    console.log('📍 Admin envoyé');
+                } catch (e) {
+                    console.warn('Erreur envoi admin:', e);
+                }
+            },
+            (err) => {
+                console.warn('Géoloc refusée:', err.message);
+            },
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        );
+    } catch (e) {}
+}
+
+function startAdminSharing() {
+    if (adminInterval) return;
+    // Premier envoi immédiat
+    sendAdminPosition();
+    // Puis toutes les 3 secondes
+    adminInterval = setInterval(sendAdminPosition, SEND_INTERVAL);
+}
+
+// ============================================================
 // STOCKAGE
+// ============================================================
 const markers = {};
 const trails = {};
 const histories = {};
@@ -92,10 +150,11 @@ function formatSpeed(kmh) { return kmh.toFixed(1) + ' km/h'; }
 function createIcon(color, name, bearing, isMe) {
     const arrow = bearing !== null ? bearingToArrow(bearing) : '';
     const border = isMe ? '4px solid #ffd700' : '3px solid #fff';
+    const size = isMe ? '48px' : '44px';
     return L.divIcon({
         className: 'custom-marker',
         html: `<div class="marker-direction">${arrow}</div>
-               <div class="marker-icon" style="background:${color};width:44px;height:44px;border:${border};">
+               <div class="marker-icon" style="background:${color};width:${size};height:${size};border:${border};">
                    ${name.charAt(0).toUpperCase()}
                </div>`,
         iconSize: [44, 60], iconAnchor: [22, 44]
@@ -250,7 +309,7 @@ function followMe() {
         map.setView(markers[userId].marker.getLatLng(), 17, { animate: true });
         markers[userId].marker.openPopup();
     } else {
-        alert('Vous ne partagez pas encore votre position. Ouvrez le share et entrez "Admin"');
+        alert('Position admin en cours de détection... Attendez quelques secondes.');
     }
 }
 function fitAll() {
@@ -302,7 +361,7 @@ function updateClock() {
     if (el) el.textContent = new Date().toLocaleTimeString('fr-FR');
 }
 
-// RAFRAÎCHISSEMENT (5 SECONDES)
+// RAFRAÎCHISSEMENT
 let attempts = 0;
 async function fetchPositions() {
     try {
@@ -332,9 +391,17 @@ async function fetchPositions() {
     }
 }
 
+// ============================================================
+// DÉMARRAGE
+// ============================================================
 updateClock();
 setInterval(updateClock, 1000);
-fetchPositions();
-setInterval(fetchPositions, REFRESH_INTERVAL); // 5 SECONDES
 
-console.log('%c 📍 Tracker FBI - Refresh 5s ✅', 'color:#00d4ff;font-weight:bold;font-size:16px');
+// Démarrer l'envoi auto de la position admin
+startAdminSharing();
+
+// Démarrer le refresh
+fetchPositions();
+setInterval(fetchPositions, REFRESH_INTERVAL);
+
+console.log('%c 📍 Tracker FBI - Admin auto-détecté ✅', 'color:#00d4ff;font-weight:bold;font-size:16px');
