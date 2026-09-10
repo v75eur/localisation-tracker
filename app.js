@@ -1,19 +1,66 @@
 // ============================================================
-// TRACKER FBI - Auto-détection admin + Suivi complet
+// TRACKER FBI - Complet avec Admin auto + Satellite + Zoom 21
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
-const REFRESH_INTERVAL = 5000;    // Refresh : 5 sec
-const SEND_INTERVAL = 3000;        // Envoi admin : 3 sec
+const REFRESH_INTERVAL = 5000;   // Refresh : 5 sec
+const SEND_INTERVAL = 3000;      // Envoi admin : 3 sec
 const TRAIL_MAX_POINTS = 200;
+const MAX_ZOOM = 21;
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
 
-// CARTE
-const map = L.map('map').setView([6.13, 1.22], 2);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap', maxZoom: 19
-}).addTo(map);
+// ============================================================
+// CARTE MULTI-COUCHES
+// ============================================================
+const map = L.map('map', {
+    maxZoom: MAX_ZOOM,
+    zoomControl: false
+}).setView([6.13, 1.22], 2);
+
+const planLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap',
+    maxZoom: MAX_ZOOM,
+    maxNativeZoom: 19
+});
+
+const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '&copy; Esri',
+    maxZoom: MAX_ZOOM,
+    maxNativeZoom: 19
+});
+
+const labelsLayer = L.tileLayer('https://stamen-tiles.a.ssl.fastly.net/toner-labels/{z}/{x}/{y}.png', {
+    maxZoom: MAX_ZOOM,
+    maxNativeZoom: 18,
+    opacity: 0.7
+});
+
+let currentMode = 'plan';
+planLayer.addTo(map);
+
+function toggleSatellite() {
+    if (currentMode === 'plan') {
+        map.removeLayer(planLayer);
+        satelliteLayer.addTo(map);
+        labelsLayer.addTo(map);
+        currentMode = 'satellite';
+        const btn = document.getElementById('satBtn');
+        if (btn) btn.innerHTML = '<i class="fas fa-map"></i>';
+    } else {
+        map.removeLayer(satelliteLayer);
+        map.removeLayer(labelsLayer);
+        planLayer.addTo(map);
+        currentMode = 'plan';
+        const btn = document.getElementById('satBtn');
+        if (btn) btn.innerHTML = '<i class="fas fa-satellite"></i>';
+    }
+}
+
+function zoomIn() { map.zoomIn(); }
+function zoomOut() { map.zoomOut(); }
+
+L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 // ============================================================
 // ID ADMIN
@@ -42,14 +89,13 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ============================================================
-// ENVOI AUTO DE MA POSITION (ADMIN)
+// ENVOI AUTO ADMIN
 // ============================================================
 let adminInterval = null;
 
 async function sendAdminPosition() {
     try {
         if (!navigator.geolocation) return;
-        
         navigator.geolocation.getCurrentPosition(
             async (pos) => {
                 try {
@@ -71,24 +117,17 @@ async function sendAdminPosition() {
                         signal: c.signal
                     });
                     clearTimeout(t);
-                    console.log('📍 Admin envoyé');
-                } catch (e) {
-                    console.warn('Erreur envoi admin:', e);
-                }
+                } catch (e) {}
             },
-            (err) => {
-                console.warn('Géoloc refusée:', err.message);
-            },
-            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+            (err) => console.warn('Géoloc refusée:', err.message),
+            { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
         );
     } catch (e) {}
 }
 
 function startAdminSharing() {
     if (adminInterval) return;
-    // Premier envoi immédiat
     sendAdminPosition();
-    // Puis toutes les 3 secondes
     adminInterval = setInterval(sendAdminPosition, SEND_INTERVAL);
 }
 
@@ -235,7 +274,7 @@ function updateUsersList(positions) {
             </div>
             <div class="info">
                 <div class="name">${p.name} ${isMe ? '⭐' : ''}</div>
-                <div class="coords">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</div>
+                <div class="coords">${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</div>
                 <div class="stats">
                     <span><i class="fas fa-clock"></i> ${ageText}</span>
                     <span><i class="fas fa-bullseye"></i> ±${Math.round(p.accuracy || 0)}m</span>
@@ -269,12 +308,13 @@ function updateMap(positions) {
             }).addTo(map);
             const speedKmh = (p.speed || 0) * 3.6;
             marker.bindPopup(`
-                <div style="font-family:sans-serif;min-width:170px;">
+                <div style="font-family:sans-serif;min-width:180px;">
                     <b>${p.name}${isMe ? ' ⭐' : ''}</b><br>
-                    <span style="color:#00d4ff;">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</span><br>
+                    <span style="color:#00d4ff;">${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</span><br>
                     🎯 Précision: ±${Math.round(p.accuracy || 0)}m<br>
                     ${speedKmh > 0.5 ? `🚀 ${formatSpeed(speedKmh)}<br>` : ''}
-                    <small>Vu il y a ${p.age_seconds}s</small>
+                    <small>Vu il y a ${p.age_seconds}s</small><br>
+                    <button onclick="zoomTo('${p.user_id}')" style="margin-top:5px;padding:3px 8px;background:#00d4ff;border:0;border-radius:4px;cursor:pointer;">🔍 Zoom</button>
                 </div>
             `);
             markers[p.user_id] = { marker, color };
@@ -297,6 +337,12 @@ function focusUser(uid) {
         markers[uid].marker.openPopup();
     }
 }
+function zoomTo(uid) {
+    if (markers[uid]) {
+        map.setView(markers[uid].marker.getLatLng(), 21, { animate: true });
+        markers[uid].marker.openPopup();
+    }
+}
 function selectUser(uid) {
     focusUser(uid);
     if (itineraryMode) itineraryTarget = uid;
@@ -306,15 +352,15 @@ function selectUser(uid) {
 function resetView() { map.setView([6.13, 1.22], 2, { animate: true }); }
 function followMe() {
     if (markers[userId]) {
-        map.setView(markers[userId].marker.getLatLng(), 17, { animate: true });
+        map.setView(markers[userId].marker.getLatLng(), 18, { animate: true });
         markers[userId].marker.openPopup();
     } else {
-        alert('Position admin en cours de détection... Attendez quelques secondes.');
+        alert('Position admin en cours de détection... Attendez.');
     }
 }
 function fitAll() {
     const latlngs = Object.values(markers).map(m => m.marker.getLatLng());
-    if (latlngs.length > 0) map.fitBounds(latlngs, { padding: [50, 50], maxZoom: 16 });
+    if (latlngs.length > 0) map.fitBounds(latlngs, { padding: [50, 50], maxZoom: 18 });
 }
 function toggleFullscreen() {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen();
@@ -374,7 +420,7 @@ async function fetchPositions() {
         data.positions.forEach(p => {
             if (!knownUsers.has(p.user_id) && p.user_id !== userId) {
                 knownUsers.add(p.user_id);
-                map.flyTo([p.lat, p.lng], 15, { duration: 2 });
+                map.flyTo([p.lat, p.lng], 16, { duration: 2 });
             }
         });
         updateMap(data.positions);
@@ -391,17 +437,11 @@ async function fetchPositions() {
     }
 }
 
-// ============================================================
 // DÉMARRAGE
-// ============================================================
 updateClock();
 setInterval(updateClock, 1000);
-
-// Démarrer l'envoi auto de la position admin
 startAdminSharing();
-
-// Démarrer le refresh
 fetchPositions();
 setInterval(fetchPositions, REFRESH_INTERVAL);
 
-console.log('%c 📍 Tracker FBI - Admin auto-détecté ✅', 'color:#00d4ff;font-weight:bold;font-size:16px');
+console.log('%c 📍 Tracker FBI - Complet ✅', 'color:#00d4ff;font-weight:bold;font-size:16px');

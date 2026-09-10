@@ -13,7 +13,7 @@
         <div class="header-left">
             <h1>📍 Tracker FBI</h1>
             <span class="live-dot" id="liveDot"></span>
-            <span class="live-text" id="liveText">LIVE</span>
+            <span class="live-text">LIVE</span>
         </div>
         <div class="header-right">
             <div class="count"><i class="fas fa-users"></i> <span id="userCount">0</span></div>
@@ -30,6 +30,9 @@
         <button onclick="toggleFullscreen()" title="Plein écran"><i class="fas fa-expand"></i></button>
         <button onclick="exportGPX()" title="Exporter GPX"><i class="fas fa-download"></i></button>
         <button onclick="toggleItinerary()" title="Itinéraire"><i class="fas fa-route"></i></button>
+        <button onclick="toggleSatellite()" id="satBtn" title="Satellite/Plan"><i class="fas fa-satellite"></i></button>
+        <button onclick="zoomIn()" title="Zoom +"><i class="fas fa-search-plus"></i></button>
+        <button onclick="zoomOut()" title="Zoom -"><i class="fas fa-search-minus"></i></button>
     </div>
 
     <div class="sidebar" id="sidebar">
