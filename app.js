@@ -1,9 +1,9 @@
 // ============================================================
-// TRACKER FBI - VERSION ULTIME COMPLÈTE
+// TRACKER FBI - Refresh toutes les 5 SECONDES
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
-const REFRESH_INTERVAL = 3000;
+const REFRESH_INTERVAL = 5000; // 5 SECONDES
 const TRAIL_MAX_POINTS = 200;
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
@@ -14,7 +14,7 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap', maxZoom: 19
 }).addTo(map);
 
-// MON ID
+// MON ID - Le tracker doit avoir le même ID que ton share
 let userId = localStorage.getItem('tracker_user_id');
 if (!userId) {
     userId = 'admin_' + Math.random().toString(36).substring(2, 10);
@@ -44,8 +44,6 @@ const knownUsers = new Set();
 let itineraryLine = null;
 let itineraryTarget = null;
 let itineraryMode = false;
-let followUserId = null;
-let followInterval = null;
 const colors = ['#00d4ff', '#7b2ffc', '#ff5f57', '#ffbd2e', '#28c840',
                 '#ff8c00', '#00ff88', '#ff00ff', '#ff69b4', '#00ced1'];
 let colorIndex = 0;
@@ -124,28 +122,20 @@ function updateTrail(uid, lat, lng, color) {
 function updateItinerary(positions) {
     if (itineraryLine) { map.removeLayer(itineraryLine); itineraryLine = null; }
     if (!itineraryTarget) return;
-    
     const me = positions.find(p => p.user_id === userId);
     const target = positions.find(p => p.user_id === itineraryTarget);
     if (!me || !target) return;
-    
     const dist = calcDistance(me.lat, me.lng, target.lat, target.lng);
     const bearing = calcBearing(me.lat, me.lng, target.lat, target.lng);
-    
     itineraryLine = L.polyline([
-        [me.lat, me.lng],
-        [target.lat, target.lng]
+        [me.lat, me.lng], [target.lat, target.lng]
     ], {
-        color: '#ffd700',
-        weight: 3,
-        opacity: 0.8,
-        dashArray: '10, 5'
+        color: '#ffd700', weight: 3, opacity: 0.8, dashArray: '10, 5'
     }).addTo(map);
-    
     itineraryLine.bindPopup(`
         <b>Itinéraire vers ${target.name}</b><br>
-        📏 Distance: ${formatDist(dist)}<br>
-        🧭 Cap: ${Math.round(bearing)}°<br>
+        📏 ${formatDist(dist)}<br>
+        🧭 ${Math.round(bearing)}°<br>
         ⏱️ À pied: ${Math.round(dist/1.4/60)} min<br>
         🚗 Voiture: ${Math.round(dist/13.9/60)} min
     `).openPopup();
@@ -157,14 +147,11 @@ function updateUsersList(positions) {
     const countEl = document.getElementById('userCount');
     if (countEl) countEl.textContent = positions.length;
     if (!list) return;
-    
     if (positions.length === 0) {
         list.innerHTML = '<div class="empty"><i class="fas fa-satellite-dish"></i>En attente...</div>';
         return;
     }
-    
     const me = positions.find(p => p.user_id === userId);
-    
     list.innerHTML = positions.map(p => {
         const age = p.age_seconds;
         const ageText = age < 60 ? `${age}s` : `${Math.floor(age/60)}min`;
@@ -180,12 +167,8 @@ function updateUsersList(positions) {
         const color = markers[p.user_id]?.color || '#00d4ff';
         const isMe = p.user_id === userId;
         const isTarget = p.user_id === itineraryTarget;
-        
         let distToMe = null;
-        if (me && !isMe) {
-            distToMe = calcDistance(me.lat, me.lng, p.lat, p.lng);
-        }
-        
+        if (me && !isMe) distToMe = calcDistance(me.lat, me.lng, p.lat, p.lng);
         return `<div class="user-item ${isMe ? 'me' : ''}" onclick="selectUser('${p.user_id}')" style="${isTarget ? 'border-color:#ffd700;' : ''}">
             <div class="avatar" style="background:${color}">
                 ${p.name.charAt(0).toUpperCase()}
@@ -196,9 +179,9 @@ function updateUsersList(positions) {
                 <div class="coords">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</div>
                 <div class="stats">
                     <span><i class="fas fa-clock"></i> ${ageText}</span>
+                    <span><i class="fas fa-bullseye"></i> ±${Math.round(p.accuracy || 0)}m</span>
                     ${speedKmh > 0.5 ? `<span><i class="fas fa-tachometer-alt"></i> ${formatSpeed(speedKmh)}</span>` : ''}
                     ${distance > 0 ? `<span><i class="fas fa-route"></i> ${formatDist(distance)}</span>` : ''}
-                    ${bearing !== null ? `<span><i class="fas fa-compass"></i> ${Math.round(bearing)}°</span>` : ''}
                     ${distToMe !== null ? `<span style="color:#ffd700"><i class="fas fa-arrows-alt-h"></i> ${formatDist(distToMe)}</span>` : ''}
                 </div>
             </div>
@@ -227,11 +210,11 @@ function updateMap(positions) {
             }).addTo(map);
             const speedKmh = (p.speed || 0) * 3.6;
             marker.bindPopup(`
-                <div style="font-family:sans-serif;min-width:150px;">
+                <div style="font-family:sans-serif;min-width:170px;">
                     <b>${p.name}${isMe ? ' ⭐' : ''}</b><br>
                     <span style="color:#00d4ff;">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</span><br>
+                    🎯 Précision: ±${Math.round(p.accuracy || 0)}m<br>
                     ${speedKmh > 0.5 ? `🚀 ${formatSpeed(speedKmh)}<br>` : ''}
-                    🎯 ±${Math.round(p.accuracy || 0)}m<br>
                     <small>Vu il y a ${p.age_seconds}s</small>
                 </div>
             `);
@@ -249,19 +232,15 @@ function updateMap(positions) {
     });
 }
 
-// FOCUS
 function focusUser(uid) {
     if (markers[uid]) {
         map.setView(markers[uid].marker.getLatLng(), 17, { animate: true });
         markers[uid].marker.openPopup();
     }
 }
-
 function selectUser(uid) {
     focusUser(uid);
-    if (itineraryMode) {
-        itineraryTarget = uid;
-    }
+    if (itineraryMode) itineraryTarget = uid;
 }
 
 // BOUTONS
@@ -271,7 +250,7 @@ function followMe() {
         map.setView(markers[userId].marker.getLatLng(), 17, { animate: true });
         markers[userId].marker.openPopup();
     } else {
-        alert('Vous ne partagez pas encore votre position.');
+        alert('Vous ne partagez pas encore votre position. Ouvrez le share et entrez "Admin"');
     }
 }
 function fitAll() {
@@ -304,9 +283,7 @@ function toggleItinerary() {
     }
     alert(itineraryMode ? 'Mode itinéraire ACTIVÉ. Cliquez sur un utilisateur.' : 'Mode itinéraire désactivé.');
 }
-
 function exportGPX() {
-    if (!itineraryTarget && !userId) return;
     const uid = itineraryTarget || userId;
     const h = histories[uid];
     if (!h || h.length < 2) { alert('Pas assez de points'); return; }
@@ -320,13 +297,12 @@ function exportGPX() {
     a.click();
 }
 
-// HORLOGE
 function updateClock() {
     const el = document.getElementById('clock');
     if (el) el.textContent = new Date().toLocaleTimeString('fr-FR');
 }
 
-// RAFRAÎCHISSEMENT
+// RAFRAÎCHISSEMENT (5 SECONDES)
 let attempts = 0;
 async function fetchPositions() {
     try {
@@ -336,15 +312,12 @@ async function fetchPositions() {
         clearTimeout(t);
         if (!r.ok) throw new Error();
         const data = await r.json();
-        
-        // Détection nouveau utilisateur
         data.positions.forEach(p => {
             if (!knownUsers.has(p.user_id) && p.user_id !== userId) {
                 knownUsers.add(p.user_id);
                 map.flyTo([p.lat, p.lng], 15, { duration: 2 });
             }
         });
-        
         updateMap(data.positions);
         updateUsersList(data.positions);
         updateItinerary(data.positions);
@@ -359,20 +332,9 @@ async function fetchPositions() {
     }
 }
 
-// SUIVI
-function startFollow(uid) {
-    followUserId = uid;
-    if (followInterval) clearInterval(followInterval);
-    followInterval = setInterval(() => {
-        if (followUserId && markers[followUserId]) {
-            map.panTo(markers[followUserId].marker.getLatLng(), { animate: true });
-        }
-    }, 2000);
-}
-
 updateClock();
 setInterval(updateClock, 1000);
 fetchPositions();
-setInterval(fetchPositions, REFRESH_INTERVAL);
+setInterval(fetchPositions, REFRESH_INTERVAL); // 5 SECONDES
 
-console.log('%c 📍 Tracker FBI ULTIME ✅', 'color:#00d4ff;font-weight:bold;font-size:16px');
+console.log('%c 📍 Tracker FBI - Refresh 5s ✅', 'color:#00d4ff;font-weight:bold;font-size:16px');
