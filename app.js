@@ -3,8 +3,8 @@
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
-const REFRESH_INTERVAL = 5000;
-const SEND_INTERVAL = 3000;
+const REFRESH_INTERVAL = 2000;
+const SEND_INTERVAL = 2000;
 const TRAIL_MAX_POINTS = 200;
 const MAX_ZOOM = 21;
 
