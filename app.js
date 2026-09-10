@@ -1,5 +1,5 @@
 // ============================================================
-// TRACKER FBI - Stable + Admin auto + Satellite
+// TRACKER FBI PRO - Filtres Kalman + Précision + Stabilité
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
@@ -7,6 +7,11 @@ const REFRESH_INTERVAL = 5000;
 const SEND_INTERVAL = 3000;
 const TRAIL_MAX_POINTS = 200;
 const MAX_ZOOM = 21;
+
+// Filtres
+const MAX_ACCURACY = 50;        // Ignorer si précision > 50m
+const MIN_MOVE_DISTANCE = 3;    // Ignorer si bougé < 3m
+const SMOOTHING_WINDOW = 3;     // Moyenne sur 3 positions
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
 
@@ -18,11 +23,9 @@ const map = L.map('map', { maxZoom: MAX_ZOOM, zoomControl: false }).setView([6.1
 const planLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap', maxZoom: MAX_ZOOM, maxNativeZoom: 19
 });
-
 const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     attribution: '&copy; Esri', maxZoom: MAX_ZOOM, maxNativeZoom: 19
 });
-
 const labelsLayer = L.tileLayer('https://stamen-tiles.a.ssl.fastly.net/toner-labels/{z}/{x}/{y}.png', {
     maxZoom: MAX_ZOOM, maxNativeZoom: 18, opacity: 0.7
 });
@@ -47,7 +50,6 @@ function toggleSatellite() {
 }
 function zoomIn() { map.zoomIn(); }
 function zoomOut() { map.zoomOut(); }
-
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 // ============================================================
@@ -65,9 +67,7 @@ if (!userId) {
 let wakeLock = null;
 async function requestWakeLock() {
     try {
-        if ('wakeLock' in navigator) {
-            wakeLock = await navigator.wakeLock.request('screen');
-        }
+        if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
     } catch (e) {}
 }
 window.addEventListener('load', requestWakeLock);
@@ -76,36 +76,156 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ============================================================
-// ENVOI AUTO ADMIN
+// FILTRE PROFESSIONNEL
+// ============================================================
+class PositionFilter {
+    constructor() {
+        this.history = [];
+        this.lastValid = null;
+    }
+    
+    // Précision en mètres
+    getAccuracyLabel(acc) {
+        if (acc <= 10) return { text: 'Excellent', color: '#28c840' };
+        if (acc <= 25) return { text: 'Très bon', color: '#28c840' };
+        if (acc <= 50) return { text: 'Bon', color: '#ffbd2e' };
+        if (acc <= 100) return { text: 'Moyen', color: '#ff8c00' };
+        return { text: 'Faible', color: '#ff5f57' };
+    }
+    
+    // Calcul distance
+    distance(lat1, lng1, lat2, lng2) {
+        const R = 6371000;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLng = (lng2 - lng1) * Math.PI / 180;
+        const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+    
+    // Filtre principal
+    process(pos) {
+        const acc = pos.coords.accuracy;
+        
+        // Filtre 1 : Précision
+        if (acc > MAX_ACCURACY) {
+            console.warn(`❌ Précision trop faible: ${acc}m`);
+            return null;
+        }
+        
+        const newPos = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: acc };
+        
+        // Filtre 2 : Distance minimum
+        if (this.lastValid) {
+            const dist = this.distance(this.lastValid.lat, this.lastValid.lng, newPos.lat, newPos.lng);
+            if (dist < MIN_MOVE_DISTANCE) {
+                // Pas bougé → on ne met pas à jour
+                return { ...this.lastValid, unchanged: true };
+            }
+        }
+        
+        // Filtre 3 : Moyenne mobile
+        this.history.push(newPos);
+        if (this.history.length > SMOOTHING_WINDOW) this.history.shift();
+        
+        const avgLat = this.history.reduce((s, p) => s + p.lat, 0) / this.history.length;
+        const avgLng = this.history.reduce((s, p) => s + p.lng, 0) / this.history.length;
+        const avgAcc = this.history.reduce((s, p) => s + p.accuracy, 0) / this.history.length;
+        
+        const smoothed = { lat: avgLat, lng: avgLng, accuracy: avgAcc };
+        this.lastValid = smoothed;
+        
+        return smoothed;
+    }
+    
+    reset() {
+        this.history = [];
+        this.lastValid = null;
+    }
+}
+
+const adminFilter = new PositionFilter();
+
+// ============================================================
+// GÉOLOCALISATION ROBUSTE
+// ============================================================
+function getPosition() {
+    return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error('Non supportée')); return; }
+        
+        navigator.geolocation.getCurrentPosition(
+            (pos) => resolve(pos),
+            (err) => {
+                console.warn('Haute précision échouée, fallback...');
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => resolve(pos),
+                    (err2) => reject(err2),
+                    { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
+                );
+            },
+            { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+        );
+    });
+}
+
+// ============================================================
+// ENVOI ADMIN AVEC FILTRE
 // ============================================================
 let adminInterval = null;
+let adminLastPos = null;
+
 async function sendAdminPosition() {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-        async (pos) => {
-            try {
-                const c = new AbortController();
-                const t = setTimeout(() => c.abort(), 30000);
-                await fetch(BACKEND_URL + '/api/position', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        user_id: userId, name: 'Admin',
-                        lat: pos.coords.latitude, lng: pos.coords.longitude,
-                        speed: pos.coords.speed || 0,
-                        accuracy: pos.coords.accuracy || 0,
-                        heading: pos.coords.heading || 0,
-                        altitude: pos.coords.altitude || 0
-                    }),
-                    signal: c.signal
-                });
-                clearTimeout(t);
-            } catch (e) {}
-        },
-        (err) => console.warn('Géoloc:', err.message),
-        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
-    );
+    try {
+        const rawPos = await getPosition();
+        const filtered = adminFilter.process(rawPos);
+        
+        if (!filtered) {
+            updateStatusBar('❌ Précision trop faible', '#ff5f57');
+            return;
+        }
+        
+        if (filtered.unchanged) {
+            // Pas bougé → pas d'envoi
+            updateStatusBar(`📍 Stable ±${Math.round(filtered.accuracy)}m`, '#28c840');
+            return;
+        }
+        
+        adminLastPos = filtered;
+        
+        const accLabel = adminFilter.getAccuracyLabel(filtered.accuracy);
+        updateStatusBar(
+            `📍 ${filtered.lat.toFixed(5)}, ${filtered.lng.toFixed(5)} — ${accLabel.text} (±${Math.round(filtered.accuracy)}m)`,
+            accLabel.color
+        );
+        
+        const c = new AbortController();
+        const t = setTimeout(() => c.abort(), 30000);
+        const r = await fetch(BACKEND_URL + '/api/position', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: userId, name: 'Admin',
+                lat: filtered.lat, lng: filtered.lng,
+                speed: rawPos.coords.speed || 0,
+                accuracy: filtered.accuracy,
+                heading: rawPos.coords.heading || 0,
+                altitude: rawPos.coords.altitude || 0
+            }),
+            signal: c.signal
+        });
+        clearTimeout(t);
+        const data = await r.json();
+        console.log('✅ Admin envoyé:', data);
+    } catch (e) {
+        console.warn('❌ Erreur:', e.message);
+        updateStatusBar('❌ ' + e.message, '#ff5f57');
+    }
 }
+
+function updateStatusBar(msg, color) {
+    const el = document.getElementById('statusBar');
+    if (el) { el.textContent = msg; el.style.color = color || '#ffbd2e'; }
+}
+
 function startAdminSharing() {
     if (adminInterval) return;
     sendAdminPosition();
@@ -159,8 +279,19 @@ function calcDistance(lat1, lng1, lat2, lng2) {
     const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
-function formatDist(m) { return m < 1000 ? Math.round(m) + ' m' : (m/1000).toFixed(2) + ' km'; }
+function formatDist(m) {
+    if (m < 1) return '0 m';
+    if (m < 1000) return Math.round(m) + ' m';
+    return (m/1000).toFixed(2) + ' km';
+}
 function formatSpeed(kmh) { return kmh.toFixed(1) + ' km/h'; }
+function getAccuracyLabel(acc) {
+    if (acc <= 10) return { text: 'Excellent', color: '#28c840' };
+    if (acc <= 25) return { text: 'Très bon', color: '#28c840' };
+    if (acc <= 50) return { text: 'Bon', color: '#ffbd2e' };
+    if (acc <= 100) return { text: 'Moyen', color: '#ff8c00' };
+    return { text: 'Faible', color: '#ff5f57' };
+}
 
 // ICÔNE
 function createIcon(color, name, bearing, isMe) {
@@ -177,18 +308,25 @@ function createIcon(color, name, bearing, isMe) {
     });
 }
 
-// TRAJECTOIRE
+// TRAJECTOIRE avec filtre de distance
 function updateTrail(uid, lat, lng, color) {
     if (!histories[uid]) histories[uid] = [];
     const h = histories[uid];
-    if (h.length === 0 || h[h.length-1][0] !== lat || h[h.length-1][1] !== lng) {
-        h.push([lat, lng]);
+    
+    // Filtre : n'ajouter que si bougé de plus de 3m
+    if (h.length > 0) {
+        const last = h[h.length - 1];
+        const dist = calcDistance(last[0], last[1], lat, lng);
+        if (dist < MIN_MOVE_DISTANCE) return; // Pas bougé → on ignore
     }
+    
+    h.push([lat, lng]);
     if (h.length > TRAIL_MAX_POINTS) h.shift();
+    
     if (trails[uid]) map.removeLayer(trails[uid]);
     if (h.length > 1) {
         trails[uid] = L.polyline(h, {
-            color, weight: 3, opacity: 0.6, smoothFactor: 1, dashArray: '5, 10'
+            color, weight: 3, opacity: 0.7, smoothFactor: 2, dashArray: '5, 10'
         }).addTo(map);
     }
 }
@@ -209,12 +347,11 @@ function updateItinerary(positions) {
         <b>Itinéraire vers ${target.name}</b><br>
         📏 ${formatDist(dist)}<br>
         🧭 ${Math.round(bearing)}°<br>
-        ⏱️ À pied: ${Math.round(dist/1.4/60)} min<br>
-        🚗 Voiture: ${Math.round(dist/13.9/60)} min
+        🚗 ${Math.round(dist/13.9/60)} min
     `).openPopup();
 }
 
-// LISTE STABLE
+// LISTE
 let lastListHTML = '';
 function updateUsersList(positions) {
     const list = document.getElementById('userList');
@@ -248,8 +385,10 @@ function updateUsersList(positions) {
         const color = markers[p.user_id]?.color || '#00d4ff';
         const isMe = p.user_id === userId;
         const isTarget = p.user_id === itineraryTarget;
+        const accLabel = getAccuracyLabel(p.accuracy || 0);
         let distToMe = null;
         if (me && !isMe) distToMe = calcDistance(me.lat, me.lng, p.lat, p.lng);
+        
         return `<div class="user-item ${isMe ? 'me' : ''}" data-uid="${p.user_id}" onclick="selectUser('${p.user_id}')" style="${isTarget ? 'border-color:#ffd700;' : ''}">
             <div class="avatar" style="background:${color}">
                 ${p.name.charAt(0).toUpperCase()}
@@ -257,10 +396,10 @@ function updateUsersList(positions) {
             </div>
             <div class="info">
                 <div class="name">${p.name} ${isMe ? '⭐' : ''}</div>
-                <div class="coords">${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</div>
+                <div class="coords">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</div>
                 <div class="stats">
                     <span><i class="fas fa-clock"></i> ${ageText}</span>
-                    <span><i class="fas fa-bullseye"></i> ±${Math.round(p.accuracy || 0)}m</span>
+                    <span style="color:${accLabel.color}"><i class="fas fa-bullseye"></i> ${accLabel.text} ±${Math.round(p.accuracy || 0)}m</span>
                     ${speedKmh > 0.5 ? `<span><i class="fas fa-tachometer-alt"></i> ${formatSpeed(speedKmh)}</span>` : ''}
                     ${distToMe !== null ? `<span style="color:#ffd700"><i class="fas fa-arrows-alt-h"></i> ${formatDist(distToMe)}</span>` : ''}
                 </div>
@@ -274,7 +413,7 @@ function updateUsersList(positions) {
     }
 }
 
-// CARTE STABLE
+// CARTE
 function updateMap(positions) {
     const activeIds = new Set();
     positions.forEach(p => {
@@ -293,13 +432,12 @@ function updateMap(positions) {
             const marker = L.marker([p.lat, p.lng], {
                 icon: createIcon(color, p.name, bearing, isMe)
             }).addTo(map);
-            const speedKmh = (p.speed || 0) * 3.6;
+            const accLabel = getAccuracyLabel(p.accuracy || 0);
             marker.bindPopup(`
                 <div style="font-family:sans-serif;min-width:180px;">
                     <b>${p.name}${isMe ? ' ⭐' : ''}</b><br>
                     <span style="color:#00d4ff;">${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</span><br>
-                    🎯 Précision: ±${Math.round(p.accuracy || 0)}m<br>
-                    ${speedKmh > 0.5 ? `🚀 ${formatSpeed(speedKmh)}<br>` : ''}
+                    <span style="color:${accLabel.color}">🎯 ${accLabel.text} (±${Math.round(p.accuracy || 0)}m)</span><br>
                     <small>Vu il y a ${p.age_seconds}s</small><br>
                     <button onclick="zoomTo('${p.user_id}')" style="margin-top:5px;padding:3px 8px;background:#00d4ff;border:0;border-radius:4px;cursor:pointer;">🔍 Zoom</button>
                 </div>
@@ -341,8 +479,6 @@ function followMe() {
     if (markers[userId]) {
         map.setView(markers[userId].marker.getLatLng(), 18, { animate: true });
         markers[userId].marker.openPopup();
-    } else {
-        alert('Position admin en cours de détection...');
     }
 }
 function fitAll() {
@@ -373,7 +509,7 @@ function toggleItinerary() {
         itineraryTarget = null;
         if (itineraryLine) { map.removeLayer(itineraryLine); itineraryLine = null; }
     }
-    alert(itineraryMode ? 'Mode itinéraire ACTIVÉ. Cliquez sur un utilisateur.' : 'Mode itinéraire désactivé.');
+    alert(itineraryMode ? 'Mode itinéraire ACTIVÉ.' : 'Mode itinéraire désactivé.');
 }
 function exportGPX() {
     const uid = itineraryTarget || userId;
@@ -431,4 +567,4 @@ startAdminSharing();
 fetchPositions();
 setInterval(fetchPositions, REFRESH_INTERVAL);
 
-console.log('%c 📍 Tracker FBI STABLE ✅', 'color:#00d4ff;font-weight:bold;font-size:16px');
+console.log('%c 📍 Tracker FBI PRO - Filtres actifs ✅', 'color:#00d4ff;font-weight:bold;font-size:16px');
