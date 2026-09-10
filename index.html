@@ -3,27 +3,54 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tracker - Positions en direct</title>
+    <title>Tracker FBI - Suivi en direct</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="header">
-        <h1>📍 Tracker - Positions en direct</h1>
-        <div class="count"><i class="fas fa-users"></i> <span id="userCount">0</span> actif(s)</div>
-    </div>
-    
-    <div id="map"></div>
-    
-    <div class="sidebar">
-        <h2>Utilisateurs actifs</h2>
-        <div id="userList">
-            <div class="empty">
-                <i class="fas fa-satellite-dish"></i>
-                En attente de positions...
-            </div>
+        <div class="header-left">
+            <h1>📍 Tracker FBI</h1>
+            <span class="live-dot" id="liveDot"></span>
+            <span class="live-text" id="liveText">LIVE</span>
         </div>
+        <div class="header-right">
+            <div class="count"><i class="fas fa-users"></i> <span id="userCount">0</span></div>
+            <div class="clock"><i class="fas fa-clock"></i> <span id="clock">--:--:--</span></div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="map-buttons">
+        <button onclick="resetView()" title="Vue globale"><i class="fas fa-globe"></i></button>
+        <button onclick="followMe()" title="Ma position"><i class="fas fa-crosshairs"></i></button>
+        <button onclick="fitAll()" title="Tout voir"><i class="fas fa-users"></i></button>
+        <button onclick="toggleFullscreen()" title="Plein écran"><i class="fas fa-expand"></i></button>
+        <button onclick="exportGPX()" title="Exporter GPX"><i class="fas fa-download"></i></button>
+        <button onclick="toggleItinerary()" title="Itinéraire"><i class="fas fa-route"></i></button>
+    </div>
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2><i class="fas fa-satellite-dish"></i> Utilisateurs</h2>
+            <button class="toggle-btn" onclick="toggleSidebar()">
+                <i class="fas fa-chevron-right" id="toggleIcon"></i>
+            </button>
+        </div>
+        <input type="text" id="searchUser" class="search-input" 
+               placeholder="🔍 Rechercher..." oninput="filterUsers(this.value)">
+        <div id="userList">
+            <div class="empty"><i class="fas fa-satellite-dish"></i>En attente...</div>
+        </div>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item"><span class="dot green"></span> Actif</div>
+        <div class="legend-item"><span class="dot yellow"></span> Récent</div>
+        <div class="legend-item"><span class="dot red"></span> Ancien</div>
+        <div class="legend-item"><span class="dot gold"></span> Moi</div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
