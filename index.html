@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tracker - Positions en direct</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="header">
+        <h1>📍 Tracker - Positions en direct</h1>
+        <div class="count"><i class="fas fa-users"></i> <span id="userCount">0</span> actif(s)</div>
+    </div>
+    
+    <div id="map"></div>
+    
+    <div class="sidebar">
+        <h2>Utilisateurs actifs</h2>
+        <div id="userList">
+            <div class="empty">
+                <i class="fas fa-satellite-dish"></i>
+                En attente de positions...
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

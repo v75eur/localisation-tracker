@@ -1,0 +1,20 @@
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:#050508;color:#fff;height:100vh;overflow:hidden}
+#map{width:100%;height:100vh}
+.header{position:fixed;top:0;left:0;right:0;background:rgba(5,5,8,.95);backdrop-filter:blur(20px);border-bottom:1px solid rgba(0,212,255,.15);padding:1rem 1.5rem;z-index:1000;display:flex;justify-content:space-between;align-items:center}
+.header h1{font-size:1.1rem;background:linear-gradient(135deg,#00d4ff,#7b2ffc);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header .count{background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);border-radius:50px;padding:.4rem 1rem;font-size:.85rem;color:#00d4ff}
+.header .count i{margin-right:.3rem}
+.sidebar{position:fixed;top:70px;right:1rem;width:300px;max-height:calc(100vh - 90px);background:rgba(5,5,8,.95);backdrop-filter:blur(20px);border:1px solid rgba(0,212,255,.15);border-radius:16px;padding:1rem;overflow-y:auto;z-index:1000}
+.sidebar h2{font-size:.85rem;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,.5);margin-bottom:.8rem}
+.user-item{display:flex;align-items:center;gap:.8rem;padding:.8rem;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:10px;margin-bottom:.5rem}
+.user-item .avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#00d4ff,#7b2ffc);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.9rem;flex-shrink:0}
+.user-item .info{flex:1;min-width:0}
+.user-item .name{font-size:.9rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-item .coords{font-size:.7rem;color:rgba(255,255,255,.4);font-family:monospace}
+.user-item .age{font-size:.65rem;color:#28c840}
+.user-item .age.old{color:#ffbd2e}
+.user-item .age.stale{color:#ff5f57}
+.empty{text-align:center;padding:2rem 1rem;color:rgba(255,255,255,.3);font-size:.85rem}
+.empty i{font-size:2rem;margin-bottom:.5rem;display:block;opacity:.3}
+@media(max-width:768px){.sidebar{top:auto;bottom:1rem;right:1rem;left:1rem;width:auto;max-height:40vh}}
