@@ -1,5 +1,5 @@
 // ============================================================
-// TRACKER FBI - Mise à jour stable (pas de clignotement)
+// TRACKER FBI - Stable + Admin auto + Satellite
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
@@ -214,13 +214,8 @@ function updateItinerary(positions) {
     `).openPopup();
 }
 
-// ============================================================
-// MISE À JOUR SANS CLIGNOTEMENT
-// ============================================================
-
-// Cache pour éviter les réécritures inutiles
+// LISTE STABLE
 let lastListHTML = '';
-
 function updateUsersList(positions) {
     const list = document.getElementById('userList');
     const countEl = document.getElementById('userCount');
@@ -236,8 +231,6 @@ function updateUsersList(positions) {
     }
     
     const me = positions.find(p => p.user_id === userId);
-    
-    // Trier par âge (plus récent en haut)
     const sorted = [...positions].sort((a, b) => a.age_seconds - b.age_seconds);
     
     const newHTML = sorted.map(p => {
@@ -257,8 +250,6 @@ function updateUsersList(positions) {
         const isTarget = p.user_id === itineraryTarget;
         let distToMe = null;
         if (me && !isMe) distToMe = calcDistance(me.lat, me.lng, p.lat, p.lng);
-        
-        // Détection changement de âge pour éviter le re-render
         return `<div class="user-item ${isMe ? 'me' : ''}" data-uid="${p.user_id}" onclick="selectUser('${p.user_id}')" style="${isTarget ? 'border-color:#ffd700;' : ''}">
             <div class="avatar" style="background:${color}">
                 ${p.name.charAt(0).toUpperCase()}
@@ -277,124 +268,31 @@ function updateUsersList(positions) {
         </div>`;
     }).join('');
     
-    // Ne réécrire QUE si le contenu a changé
     if (newHTML !== lastListHTML) {
-        // Mise à jour intelligente : remplacer uniquement les éléments modifiés
-        const existingItems = {};
-        list.querySelectorAll('.user-item').forEach(el => {
-            existingItems[el.dataset.uid] = el;
-        });
-        
-        sorted.forEach(p => {
-            const uid = p.user_id;
-            if (!existingItems[uid]) {
-                // Nouvel utilisateur : ajouter
-                const temp = document.createElement('div');
-                temp.innerHTML = newHTML.match(new RegExp(`<div class="user-item[^>]*data-uid="${uid}"[\\s\\S]*?</div>\\s*</div>`, 'g'))?.[0] || '');
-                if (temp.firstChild) list.appendChild(temp.firstChild);
-            } else {
-                // Mettre à jour les infos sans toucher au DOM principal
-                const item = existingItems[uid];
-                const stats = item.querySelector('.stats');
-                const coords = item.querySelector('.coords');
-                if (coords) coords.textContent = `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
-                if (stats) {
-                    const age = p.age_seconds;
-                    const ageText = age < 60 ? `${age}s` : `${Math.floor(age/60)}min`;
-                    const speedKmh = (p.speed || 0) * 3.6;
-                    const me = positions.find(x => x.user_id === userId);
-                    const isMe = uid === userId;
-                    let distToMe = null;
-                    if (me && !isMe) distToMe = calcDistance(me.lat, me.lng, p.lat, p.lng);
-                    
-                    let bearing = null, distance = 0;
-                    if (histories[uid]?.length > 1) {
-                        const h = histories[uid];
-                        distance = calcDistance(h[h.length-2][0], h[h.length-2][1], h[h.length-1][0], h[h.length-1][1]);
-                        bearing = calcBearing(h[h.length-2][0], h[h.length-2][1], h[h.length-1][0], h[h.length-1][1]);
-                    }
-                    
-                    stats.innerHTML = `
-                        <span><i class="fas fa-clock"></i> ${ageText}</span>
-                        <span><i class="fas fa-bullseye"></i> ±${Math.round(p.accuracy || 0)}m</span>
-                        ${speedKmh > 0.5 ? `<span><i class="fas fa-tachometer-alt"></i> ${formatSpeed(speedKmh)}</span>` : ''}
-                        ${distToMe !== null ? `<span style="color:#ffd700"><i class="fas fa-arrows-alt-h"></i> ${formatDist(distToMe)}</span>` : ''}
-                    `;
-                }
-            }
-        });
-        
-        // Supprimer les utilisateurs disparus
-        list.querySelectorAll('.user-item').forEach(el => {
-            const uid = el.dataset.uid;
-            if (!sorted.find(p => p.user_id === uid)) {
-                el.remove();
-            }
-        });
-        
+        list.innerHTML = newHTML;
         lastListHTML = newHTML;
     }
 }
 
-// ============================================================
-// CARTE - Mise à jour SMOOTH des marqueurs
-// ============================================================
+// CARTE STABLE
 function updateMap(positions) {
     const activeIds = new Set();
-    
     positions.forEach(p => {
         activeIds.add(p.user_id);
         const color = getColor(p.user_id);
         const isMe = p.user_id === userId;
-        
         let bearing = null;
         if (histories[p.user_id]?.length > 0) {
             const last = histories[p.user_id][histories[p.user_id].length - 1];
-            if (last[0] !== p.lat || last[1] !== p.lng) {
-                bearing = calcBearing(last[0], last[1], p.lat, p.lng);
-            }
+            if (last[0] !== p.lat || last[1] !== p.lng) bearing = calcBearing(last[0], last[1], p.lat, p.lng);
         }
-        
         if (markers[p.user_id]) {
-            // Mise à jour SMOOTH : glisser le marqueur
-            const marker = markers[p.user_id].marker;
-            const oldLatLng = marker.getLatLng();
-            
-            // Animation de glissement
-            const steps = 10;
-            const latStep = (p.lat - oldLatLng.lat) / steps;
-            const lngStep = (p.lng - oldLatLng.lng) / steps;
-            let step = 0;
-            
-            const animate = () => {
-                step++;
-                if (step <= steps) {
-                    marker.setLatLng([oldLatLng.lat + latStep * step, oldLatLng.lng + lngStep * step]);
-                    requestAnimationFrame(animate);
-                }
-            };
-            animate();
-            
-            marker.setIcon(createIcon(color, p.name, bearing, isMe));
-            
-            // Mettre à jour le popup
-            const speedKmh = (p.speed || 0) * 3.6;
-            marker.getPopup()?.setContent(`
-                <div style="font-family:sans-serif;min-width:180px;">
-                    <b>${p.name}${isMe ? ' ⭐' : ''}</b><br>
-                    <span style="color:#00d4ff;">${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</span><br>
-                    🎯 Précision: ±${Math.round(p.accuracy || 0)}m<br>
-                    ${speedKmh > 0.5 ? `🚀 ${formatSpeed(speedKmh)}<br>` : ''}
-                    <small>Vu il y a ${p.age_seconds}s</small><br>
-                    <button onclick="zoomTo('${p.user_id}')" style="margin-top:5px;padding:3px 8px;background:#00d4ff;border:0;border-radius:4px;cursor:pointer;">🔍 Zoom</button>
-                </div>
-            `);
+            markers[p.user_id].marker.setLatLng([p.lat, p.lng]);
+            markers[p.user_id].marker.setIcon(createIcon(color, p.name, bearing, isMe));
         } else {
-            // Nouveau marqueur
             const marker = L.marker([p.lat, p.lng], {
                 icon: createIcon(color, p.name, bearing, isMe)
             }).addTo(map);
-            
             const speedKmh = (p.speed || 0) * 3.6;
             marker.bindPopup(`
                 <div style="font-family:sans-serif;min-width:180px;">
@@ -406,14 +304,10 @@ function updateMap(positions) {
                     <button onclick="zoomTo('${p.user_id}')" style="margin-top:5px;padding:3px 8px;background:#00d4ff;border:0;border-radius:4px;cursor:pointer;">🔍 Zoom</button>
                 </div>
             `);
-            
             markers[p.user_id] = { marker, color };
         }
-        
         updateTrail(p.user_id, p.lat, p.lng, color);
     });
-    
-    // Supprimer les marqueurs inactifs
     Object.keys(markers).forEach(uid => {
         if (!activeIds.has(uid)) {
             map.removeLayer(markers[uid].marker);
@@ -500,7 +394,7 @@ function updateClock() {
     if (el) el.textContent = new Date().toLocaleTimeString('fr-FR');
 }
 
-// RAFRAÎCHISSEMENT
+// REFRESH
 let attempts = 0;
 async function fetchPositions() {
     try {
@@ -510,14 +404,12 @@ async function fetchPositions() {
         clearTimeout(t);
         if (!r.ok) throw new Error();
         const data = await r.json();
-        
         data.positions.forEach(p => {
             if (!knownUsers.has(p.user_id) && p.user_id !== userId) {
                 knownUsers.add(p.user_id);
                 map.flyTo([p.lat, p.lng], 16, { duration: 2 });
             }
         });
-        
         updateMap(data.positions);
         updateUsersList(data.positions);
         updateItinerary(data.positions);
