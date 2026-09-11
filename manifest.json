@@ -1,5 +1,5 @@
 {
-    "name": "Tracker GPS",
+    "name": "Tracker GPS Live",
     "short_name": "Tracker",
     "description": "Suivi GPS en temps réel",
     "start_url": "/",

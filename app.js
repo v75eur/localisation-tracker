@@ -1,18 +1,16 @@
 // ============================================================
-// TRACKER GPS COMPLET - OSRM + Météo + PWA + Fluidité
+// TRACKER GPS LIVE - Kalman + Talkie-Walkie + Fluidité
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
 const REFRESH_INTERVAL = 2000;
 const SEND_INTERVAL = 2000;
-const TRAIL_MAX_POINTS = 100;
+const TRAIL_MAX_POINTS = 150;
 const MAX_ZOOM = 21;
 const MAX_ACCURACY = 50;
-const TRAIL_MIN_MOVE = 10;
+const TRAIL_MIN_MOVE = 5;
 const MIN_MOVE_UPDATE = 3;
 const GEOCODE_CACHE = {};
-const WEATHER_CACHE = {};
-const WEATHER_TTL = 10 * 60 * 1000;
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
 
@@ -47,15 +45,34 @@ function toggleSatellite() {
 
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-// ============================================================
 // PWA
-// ============================================================
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
 // ============================================================
-// THEME
+// FILTRE DE KALMAN
+// ============================================================
+class KalmanFilter {
+    constructor() { this.reset(); }
+    reset() { this.lat = null; this.lng = null; this.variance = -1; }
+    process(lat, lng, accuracy) {
+        if (this.lat === null) {
+            this.lat = lat; this.lng = lng;
+            this.variance = accuracy * accuracy;
+            return { lat, lng };
+        }
+        const variance = this.variance + 0.01;
+        const gain = variance / (variance + accuracy * accuracy);
+        this.lat = this.lat + gain * (lat - this.lat);
+        this.lng = this.lng + gain * (lng - this.lng);
+        this.variance = (1 - gain) * variance;
+        return { lat: this.lat, lng: this.lng };
+    }
+}
+
+// ============================================================
+// THÈME
 // ============================================================
 function toggleTheme() {
     document.body.classList.toggle('light');
@@ -131,7 +148,7 @@ function calcBearing(lat1, lng1, lat2, lng2) {
 }
 
 // ============================================================
-// ADRESSE (Nominatim)
+// ADRESSE
 // ============================================================
 async function getAddress(lat, lng) {
     const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
@@ -151,35 +168,89 @@ async function getAddress(lat, lng) {
 }
 
 // ============================================================
-// MÉTÉO (Open-Meteo)
+// TALKIE-WALKIE
 // ============================================================
-async function getWeather(lat, lng) {
-    const key = `${lat.toFixed(2)},${lng.toFixed(2)}`;
-    const cached = WEATHER_CACHE[key];
-    if (cached && (Date.now() - cached.time < WEATHER_TTL)) return cached.data;
-    try {
-        const c = new AbortController();
-        const t = setTimeout(() => c.abort(), 5000);
-        const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code`, { signal: c.signal });
-        clearTimeout(t);
-        const data = await r.json();
-        const temp = Math.round(data.current.temperature_2m);
-        const code = data.current.weather_code;
-        const emoji = getWeatherEmoji(code);
-        const result = `${emoji} ${temp}°C`;
-        WEATHER_CACHE[key] = { data: result, time: Date.now() };
-        return result;
-    } catch (e) { return ''; }
+let callEngine = null;
+let currentCall = null;
+
+function initCall() {
+    if (typeof EasyCall !== 'undefined') {
+        callEngine = new EasyCall({
+            stunServers: ['stun:stun.l.google.com:19302']
+        });
+        callEngine.on('incoming', (call) => {
+            const callerName = call.metadata?.name || 'Inconnu';
+            if (confirm(`📞 ${callerName} vous appelle. Accepter ?`)) {
+                call.answer();
+                currentCall = call;
+                showCallUI(callerName);
+                call.on('ended', () => hideCallUI());
+            } else {
+                call.reject();
+            }
+        });
+        console.log('📞 EasyCall prêt');
+    }
 }
-function getWeatherEmoji(code) {
-    if (code === 0) return '☀️';
-    if (code <= 3) return '⛅';
-    if (code <= 48) return '🌫️';
-    if (code <= 67) return '🌧️';
-    if (code <= 77) return '❄️';
-    if (code <= 82) return '🌧️';
-    if (code <= 86) return '❄️';
-    return '⛈️';
+
+async function callUser(targetUserId) {
+    if (!callEngine) return alert('Talkie-walkie non prêt');
+    const target = markers[targetUserId];
+    if (!target) return;
+    try {
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+        currentCall = await callEngine.call(targetUserId, {
+            metadata: { name: 'Admin' }
+        });
+        showCallUI(target.name || 'Utilisateur');
+        currentCall.on('connected', () => {
+            updateStatusBar(`📞 Connecté à ${target.name}`, '#28c840');
+        });
+        currentCall.on('ended', () => {
+            hideCallUI();
+            updateStatusBar('📞 Appel terminé', '#ffbd2e');
+        });
+        currentCall.on('error', (e) => {
+            updateStatusBar('❌ ' + e.message, '#ff5f57');
+            setTimeout(hideCallUI, 3000);
+        });
+    } catch (e) {
+        alert('Micro refusé: ' + e.message);
+    }
+}
+
+function endCall() {
+    if (currentCall) {
+        currentCall.end();
+        currentCall = null;
+        hideCallUI();
+    }
+}
+
+function showCallUI(name) {
+    let ui = document.getElementById('callUI');
+    if (!ui) {
+        ui = document.createElement('div');
+        ui.id = 'callUI';
+        ui.className = 'call-ui';
+        ui.innerHTML = `
+            <div class="call-avatar">📞</div>
+            <div style="font-size:1.2rem;font-weight:700;margin-bottom:.5rem;" id="callName"></div>
+            <div style="color:rgba(255,255,255,.5);font-size:.9rem;" id="callStatus">Appel en cours...</div>
+            <button class="call-btn-end" onclick="endCall()">
+                <i class="fas fa-phone-slash"></i> Raccrocher
+            </button>
+        `;
+        document.body.appendChild(ui);
+    }
+    document.getElementById('callName').textContent = name;
+    ui.classList.add('show');
+}
+
+function hideCallUI() {
+    const ui = document.getElementById('callUI');
+    if (ui) ui.classList.remove('show');
+    if (currentCall) { currentCall.end(); currentCall = null; }
 }
 
 // ============================================================
@@ -188,6 +259,7 @@ function getWeatherEmoji(code) {
 let adminInterval = null;
 let adminLastSent = null;
 let isSendingAdmin = false;
+const adminFilter = new KalmanFilter();
 
 function getPosition() {
     return new Promise((resolve, reject) => {
@@ -208,23 +280,24 @@ async function sendAdminPosition() {
             updateStatusBar(`❌ Précision ${Math.round(acc)}m`, '#ff5f57');
             return;
         }
+        const filtered = adminFilter.process(pos.coords.latitude, pos.coords.longitude, acc);
         if (adminLastSent) {
-            const dist = calcDistance(adminLastSent.lat, adminLastSent.lng, pos.coords.latitude, pos.coords.longitude);
+            const dist = calcDistance(adminLastSent.lat, adminLastSent.lng, filtered.lat, filtered.lng);
             if (dist < MIN_MOVE_UPDATE) {
                 const label = getAccuracyLabel(acc);
                 updateStatusBar(`📍 Stable ±${Math.round(acc)}m (${label.text})`, label.color);
                 return;
             }
         }
-        adminLastSent = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        adminLastSent = filtered;
         const label = getAccuracyLabel(acc);
-        updateStatusBar(`📍 ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)} — ${label.text} ±${Math.round(acc)}m`, label.color);
+        updateStatusBar(`📍 ${filtered.lat.toFixed(5)}, ${filtered.lng.toFixed(5)} — ${label.text} ±${Math.round(acc)}m`, label.color);
         await fetch(BACKEND_URL + '/api/position', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 user_id: userId, name: 'Admin',
-                lat: pos.coords.latitude, lng: pos.coords.longitude,
+                lat: filtered.lat, lng: filtered.lng,
                 speed: pos.coords.speed || 0, accuracy: acc,
                 heading: pos.coords.heading || 0, altitude: pos.coords.altitude || 0
             })
@@ -253,10 +326,9 @@ const trails = {};
 const histories = {};
 const totalDistances = {};
 const addresses = {};
-const weather = {};
+const filters = {};
 const colors = ['#00d4ff', '#7b2ffc', '#ff5f57', '#ffbd2e', '#28c840', '#ff8c00', '#00ff88', '#ff00ff', '#ff69b4', '#00ced1'];
 let colorIndex = 0;
-let routingControl = null;
 
 function getColor(uid) {
     if (!markers[uid]) {
@@ -274,11 +346,8 @@ function createIcon(color, name, bearing, isMe) {
     const pinClass = isMe ? 'marker-pin me' : 'marker-pin';
     return L.divIcon({
         className: 'custom-marker',
-        html: `<div class="marker-direction">${arrow}</div>
-               <div class="${pinClass}" style="background:${color};">
-                   ${name.charAt(0).toUpperCase()}
-               </div>`,
-        iconSize: [36, 36], iconAnchor: [18, 18]
+        html: `<div class="${pinClass}" style="background:${color};"><span>${name.charAt(0).toUpperCase()}</span></div>`,
+        iconSize: [32, 32], iconAnchor: [16, 32]
     });
 }
 
@@ -299,48 +368,24 @@ function updateTrail(uid, lat, lng, color) {
     if (h.length > TRAIL_MAX_POINTS) h.shift();
     if (trails[uid]) map.removeLayer(trails[uid]);
     if (h.length > 1) {
-        trails[uid] = L.polyline(h, { color, weight: 4, opacity: 0.7, smoothFactor: 2 }).addTo(map);
+        trails[uid] = L.polyline(h, { color, weight: 3, opacity: 0.6, smoothFactor: 2 }).addTo(map);
     }
-}
-
-// ============================================================
-// ITINÉRAIRE OSRM
-// ============================================================
-function showRoute(targetUserId) {
-    const me = markers[userId];
-    const target = markers[targetUserId];
-    if (!me || !target) return;
-    if (routingControl) map.removeControl(routingControl);
-    const mePos = me.marker.getLatLng();
-    const targetPos = target.marker.getLatLng();
-    routingControl = L.Routing.control({
-        waypoints: [L.latLng(mePos.lat, mePos.lng), L.latLng(targetPos.lat, targetPos.lng)],
-        routeWhileDragging: false, addWaypoints: false, fitSelectedRoutes: true, showAlternatives: false,
-        lineOptions: { styles: [{ color: '#ffd700', weight: 4, opacity: 0.8 }] },
-        createMarker: () => null, language: 'fr', show: false
-    }).addTo(map);
-    routingControl.on('routesfound', e => {
-        const r = e.routes[0];
-        const dist = (r.summary.totalDistance / 1000).toFixed(2);
-        const time = Math.round(r.summary.totalTime / 60);
-        updateStatusBar(`🚗 ${dist} km — ${time} min`, '#ffd700');
-    });
-}
-
-function clearRoute() {
-    if (routingControl) { map.removeControl(routingControl); routingControl = null; }
 }
 
 // ============================================================
 // LISTE
 // ============================================================
+let lastListHTML = '';
 function updateUsersList(positions) {
     const list = document.getElementById('userList');
     const countEl = document.getElementById('userCount');
     if (countEl) countEl.textContent = positions.length;
     if (!list) return;
     if (positions.length === 0) {
-        list.innerHTML = '<div class="empty"><i class="fas fa-satellite-dish"></i>En attente...</div>';
+        if (lastListHTML !== 'empty') {
+            list.innerHTML = '<div class="empty"><i class="fas fa-satellite-dish"></i>En attente...</div>';
+            lastListHTML = 'empty';
+        }
         return;
     }
     const sorted = [...positions].sort((a, b) => {
@@ -348,7 +393,7 @@ function updateUsersList(positions) {
         if (b.user_id === userId) return 1;
         return a.age_seconds - b.age_seconds;
     });
-    list.innerHTML = sorted.map(p => {
+    const newHTML = sorted.map(p => {
         const age = p.age_seconds;
         const ageText = age < 60 ? `${age}s` : `${Math.floor(age/60)}min`;
         const speedKmh = (p.speed || 0) * 3.6;
@@ -356,33 +401,31 @@ function updateUsersList(positions) {
         const isMe = p.user_id === userId;
         const accLabel = getAccuracyLabel(p.accuracy || 0);
         const addr = addresses[p.user_id] || '...';
-        const wx = weather[p.user_id] || '';
         const totalDist = totalDistances[p.user_id] || 0;
         return `<div class="user-item ${isMe ? 'me' : ''}" onclick="selectUser('${p.user_id}')">
             <div class="avatar" style="background:${color}">${p.name.charAt(0).toUpperCase()}</div>
             <div class="info">
-                <div class="name">${p.name} ${isMe ? '⭐' : ''} ${wx}</div>
+                <div class="name">${p.name} ${isMe ? '⭐' : ''}</div>
                 <div class="address">📍 ${addr}</div>
                 <div class="coords">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</div>
                 <div class="meta">
                     <span><i class="fas fa-clock"></i> ${ageText}</span>
                     <span style="color:${accLabel.color}"><i class="fas fa-bullseye"></i> ±${Math.round(p.accuracy || 0)}m</span>
-                    ${speedKmh > 0.5 ? `<span><i class="fas fa-tachometer-alt"></i> ${speedKmh.toFixed(1)}</span>` : ''}
+                    ${speedKmh > 0.5 ? `<span><i class="fas fa-tachometer-alt"></i> ${speedKmh.toFixed(1)}km/h</span>` : ''}
                     ${totalDist > 0 ? `<span><i class="fas fa-route"></i> ${formatDist(totalDist)}</span>` : ''}
                 </div>
             </div>
         </div>`;
     }).join('');
-    
-    // Charger adresses + météo en arrière-plan
-    sorted.forEach(p => {
-        if (!addresses[p.user_id]) {
-            getAddress(p.lat, p.lng).then(a => { if (a) { addresses[p.user_id] = a; updateUsersList(positions); } });
-        }
-        if (!weather[p.user_id]) {
-            getWeather(p.lat, p.lng).then(w => { if (w) { weather[p.user_id] = w; updateUsersList(positions); } });
-        }
-    });
+    if (newHTML !== lastListHTML) {
+        list.innerHTML = newHTML;
+        lastListHTML = newHTML;
+        sorted.forEach(p => {
+            if (!addresses[p.user_id]) {
+                getAddress(p.lat, p.lng).then(a => { if (a) addresses[p.user_id] = a; });
+            }
+        });
+    }
 }
 
 // ============================================================
@@ -394,20 +437,30 @@ function updateMap(positions) {
         activeIds.add(p.user_id);
         const color = getColor(p.user_id);
         const isMe = p.user_id === userId;
+        if (!filters[p.user_id]) filters[p.user_id] = new KalmanFilter();
+        const smooth = filters[p.user_id].process(p.lat, p.lng, p.accuracy || 10);
         let bearing = null;
         if (histories[p.user_id]?.length > 0) {
             const last = histories[p.user_id][histories[p.user_id].length - 1];
-            if (last[0] !== p.lat || last[1] !== p.lng) bearing = calcBearing(last[0], last[1], p.lat, p.lng);
+            if (last[0] !== smooth.lat || last[1] !== smooth.lng) bearing = calcBearing(last[0], last[1], smooth.lat, smooth.lng);
         }
         if (markers[p.user_id]) {
-            markers[p.user_id].marker.setLatLng([p.lat, p.lng]);
+            markers[p.user_id].marker.setLatLng([smooth.lat, smooth.lng]);
             markers[p.user_id].marker.setIcon(createIcon(color, p.name, bearing, isMe));
         } else {
-            const marker = L.marker([p.lat, p.lng], { icon: createIcon(color, p.name, bearing, isMe) }).addTo(map);
-            marker.bindPopup(`<b>${p.name}${isMe ? ' ⭐' : ''}</b><br>${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}<br><button onclick="openGoogleMaps(${p.lat}, ${p.lng})" style="margin-top:5px;padding:4px 10px;background:#4285f4;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:11px;">🗺️ Google Maps</button>`);
+            const marker = L.marker([smooth.lat, smooth.lng], { icon: createIcon(color, p.name, bearing, isMe) }).addTo(map);
+            marker.bindPopup(`
+                <div style="font-family:sans-serif;min-width:180px;">
+                    <b>${p.name}${isMe ? ' ⭐' : ''}</b><br>
+                    <span style="color:#00d4ff;">${smooth.lat.toFixed(5)}, ${smooth.lng.toFixed(5)}</span><br>
+                    🎯 ±${Math.round(p.accuracy || 0)}m<br>
+                    <button onclick="callUser('${p.user_id}')" style="margin-top:8px;padding:6px 12px;background:#28c840;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📞 Appeler</button>
+                    <button onclick="openGoogleMaps(${smooth.lat}, ${smooth.lng})" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#4285f4;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🗺️ Maps</button>
+                </div>
+            `);
             markers[p.user_id] = { marker, color };
         }
-        updateTrail(p.user_id, p.lat, p.lng, color);
+        updateTrail(p.user_id, smooth.lat, smooth.lng, color);
     });
     Object.keys(markers).forEach(uid => {
         if (!activeIds.has(uid)) {
@@ -415,6 +468,7 @@ function updateMap(positions) {
             delete markers[uid];
             if (trails[uid]) { map.removeLayer(trails[uid]); delete trails[uid]; }
             delete histories[uid];
+            delete filters[uid];
         }
     });
 }
@@ -428,10 +482,7 @@ function focusUser(uid) {
         markers[uid].marker.openPopup();
     }
 }
-function selectUser(uid) {
-    focusUser(uid);
-    if (uid !== userId) showRoute(uid);
-}
+function selectUser(uid) { focusUser(uid); }
 function openGoogleMaps(lat, lng) {
     window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank');
 }
@@ -503,8 +554,9 @@ async function fetchPositions() {
 // ============================================================
 updateClock();
 setInterval(updateClock, 1000);
+initCall();
 startAdminSharing();
 fetchPositions();
 setInterval(fetchPositions, REFRESH_INTERVAL);
 
-console.log('%c 📍 Tracker COMPLET - OSRM + Météo + PWA ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
+console.log('%c 📍 Tracker GPS LIVE - Kalman + Talkie-Walkie ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');

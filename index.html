@@ -4,17 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#050508">
-    <title>Tracker GPS</title>
+    <title>Tracker GPS Live</title>
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="header">
         <div class="header-left">
-            <h1>📍 Tracker GPS</h1>
+            <h1>📍 Tracker Live</h1>
             <span class="live-dot" id="liveDot"></span>
         </div>
         <div class="header-right">
@@ -32,13 +31,12 @@
         <button onclick="fitAll()" title="Tout voir"><i class="fas fa-users"></i></button>
         <button onclick="toggleFullscreen()" title="Plein écran"><i class="fas fa-expand"></i></button>
         <button onclick="toggleSatellite()" id="satBtn" title="Satellite"><i class="fas fa-satellite"></i></button>
-        <button onclick="clearRoute()" title="Effacer itinéraire"><i class="fas fa-route"></i></button>
         <button onclick="exportGPX()" title="Export GPX"><i class="fas fa-download"></i></button>
     </div>
 
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <h2><i class="fas fa-satellite-dish"></i> Positions</h2>
+            <h2><i class="fas fa-satellite-dish"></i> Unités</h2>
             <button class="toggle-btn" onclick="toggleSidebar()">
                 <i class="fas fa-chevron-right" id="toggleIcon"></i>
             </button>
@@ -48,10 +46,10 @@
         </div>
     </div>
 
-    <div class="status-bar" id="statusBar">⏳ Détection...</div>
+    <div class="status-bar" id="statusBar">⏳ Initialisation...</div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.min.js"></script>
+    <script src="https://unpkg.com/easy-call-engine@latest/dist/easycall.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
