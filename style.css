@@ -32,17 +32,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .toggle-btn{background:rgba(0,212,255,.1);border:1px solid var(--border);border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--accent);cursor:pointer;font-size:.7rem}
 #userList{max-height:calc(100vh - 200px);overflow-y:auto}
 
+.filters-bar{display:flex;gap:.4rem;padding:.5rem 0;border-bottom:1px solid var(--border);margin-bottom:.6rem;flex-wrap:wrap}
+.filter-btn{padding:.3rem .7rem;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:50px;color:var(--text-dim);font-size:.65rem;cursor:pointer;transition:all .2s;font-family:inherit}
+.filter-btn:hover{border-color:var(--accent)}
+.filter-btn.active{background:rgba(0,212,255,.15);border-color:var(--accent);color:var(--accent)}
+.sort-bar{display:flex;gap:.4rem;padding:.3rem 0;margin-bottom:.6rem;flex-wrap:wrap}
+.sort-btn{padding:.25rem .6rem;background:transparent;border:1px solid rgba(255,255,255,.08);border-radius:50px;color:var(--text-dim);font-size:.6rem;cursor:pointer;font-family:inherit}
+.sort-btn.active{background:rgba(0,212,255,.1);border-color:var(--accent);color:var(--accent)}
+
 .user-item{display:flex;align-items:center;gap:.7rem;padding:.7rem;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);border-radius:10px;margin-bottom:.5rem;cursor:pointer;transition:all .2s}
 .user-item:hover{border-color:var(--accent);background:rgba(0,212,255,.05)}
 .user-item.me{border-color:rgba(255,215,0,.5);background:rgba(255,215,0,.05)}
 .user-item .avatar{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;flex-shrink:0;border:2px solid rgba(255,255,255,.2)}
 .user-item.me .avatar{border-color:#ffd700}
 .user-item .info{flex:1;min-width:0}
-.user-item .name{font-size:.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-item .name{font-size:.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:.4rem}
 .user-item .address{font-size:.65rem;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:.15rem}
 .user-item .coords{font-size:.6rem;color:var(--text-dim);font-family:monospace}
 .user-item .meta{display:flex;gap:.5rem;font-size:.6rem;color:var(--text-dim);margin-top:.25rem;flex-wrap:wrap}
 .user-item .meta span{display:flex;align-items:center;gap:.2rem}
+
+.status-badge{display:inline-block;padding:.1rem .5rem;border-radius:50px;font-size:.55rem;font-weight:700}
+.status-mobile{background:rgba(40,200,64,.15);color:#28c840}
+.status-immobile{background:rgba(255,189,46,.15);color:#ffbd2e}
 
 .empty{text-align:center;padding:2rem 1rem;color:var(--text-dim);font-size:.85rem}
 .empty i{font-size:2rem;margin-bottom:.5rem;display:block;opacity:.3}
@@ -51,7 +63,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 .custom-marker{position:relative}
 .marker-pin{width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 10px rgba(0,0,0,.5)}
-.marker-pin span{transform:rotate(45deg);font-size:14px}
+.marker-pin span{transform:rotate(45deg);font-size:14px;color:#fff;font-weight:700}
 .marker-pin.me{border-color:#ffd700;box-shadow:0 0 0 4px rgba(255,215,0,.3),0 2px 10px rgba(0,0,0,.5)}
 
 .call-ui{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(5,5,8,.98);z-index:9999;align-items:center;justify-content:center;flex-direction:column}
@@ -64,26 +76,3 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     .map-buttons{top:70px;left:.5rem}
     .status-bar{bottom:auto;top:70px;right:.5rem;left:auto}
 }
-
-/* FILTRES ET TRI */
-.filters-bar{display:flex;gap:.4rem;padding:.5rem 0;border-bottom:1px solid var(--border);margin-bottom:.6rem;flex-wrap:wrap}
-.filter-btn{padding:.3rem .7rem;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:50px;color:var(--text-dim);font-size:.65rem;cursor:pointer;transition:all .2s;font-family:inherit}
-.filter-btn:hover{border-color:var(--accent)}
-.filter-btn.active{background:rgba(0,212,255,.15);border-color:var(--accent);color:var(--accent)}
-
-.sort-bar{display:flex;gap:.4rem;padding:.3rem 0;margin-bottom:.6rem;flex-wrap:wrap}
-.sort-btn{padding:.25rem .6rem;background:transparent;border:1px solid rgba(255,255,255,.08);border-radius:50px;color:var(--text-dim);font-size:.6rem;cursor:pointer;font-family:inherit}
-.sort-btn.active{background:rgba(0,212,255,.1);border-color:var(--accent);color:var(--accent)}
-
-/* STATUT MOBILE/IMMOBILE */
-.status-badge{display:inline-block;padding:.1rem .5rem;border-radius:50px;font-size:.55rem;font-weight:700}
-.status-mobile{background:rgba(40,200,64,.15);color:#28c840}
-.status-immobile{background:rgba(255,189,46,.15);color:#ffbd2e}
-
-/* STATS PAR UTILISATEUR */
-.user-stats{display:grid;grid-template-columns:1fr 1fr;gap:.3rem;margin-top:.3rem;font-size:.6rem;color:var(--text-dim)}
-.user-stats span{display:flex;align-items:center;gap:.2rem}
-
-/* BIP SONORE */
-@keyframes beepPulse{0%,100%{opacity:1}50%{opacity:.3}}
-.beep-alert{animation:beepPulse 1s infinite}
