@@ -3,13 +3,13 @@
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
-const REFRESH_INTERVAL = 2000;
-const SEND_INTERVAL = 2000;
+const REFRESH_INTERVAL = 1000;
+const SEND_INTERVAL = 1000;
 const TRAIL_MAX_POINTS = 150;
 const MAX_ZOOM = 21;
-const MAX_ACCURACY = 30;
-const TRAIL_MIN_MOVE = 8;
-const MIN_MOVE_UPDATE = 2;
+const MAX_ACCURACY = 50;
+const TRAIL_MIN_MOVE = 2;
+const MIN_MOVE_UPDATE = 1;
 const GEOCODE_CACHE = {};
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
