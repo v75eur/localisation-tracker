@@ -14,7 +14,9 @@ const GEOCODE_CACHE = {};
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
 
+// ============================================================
 // CARTE
+// ============================================================
 const map = L.map('map', { maxZoom: MAX_ZOOM, zoomControl: false }).setView([6.13, 1.22], 15);
 const planLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap', maxZoom: MAX_ZOOM, maxNativeZoom: 19
@@ -44,7 +46,9 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
-// KALMAN
+// ============================================================
+// FILTRE KALMAN
+// ============================================================
 class KalmanFilter {
     constructor() { this.reset(); }
     reset() { this.lat = null; this.lng = null; this.variance = -1; }
@@ -64,7 +68,9 @@ class KalmanFilter {
 }
 const kalmanFilters = {};
 
+// ============================================================
 // THÈME
+// ============================================================
 function toggleTheme() {
     document.body.classList.toggle('light');
     const icon = document.getElementById('themeIcon');
@@ -76,14 +82,18 @@ if (localStorage.getItem('tracker_theme') === 'light') {
     document.getElementById('themeIcon').className = 'fas fa-sun';
 }
 
+// ============================================================
 // ID ADMIN
+// ============================================================
 let userId = localStorage.getItem('tracker_user_id');
 if (!userId) {
     userId = 'admin_' + Math.random().toString(36).substring(2, 10);
     localStorage.setItem('tracker_user_id', userId);
 }
 
+// ============================================================
 // WAKE LOCK
+// ============================================================
 let wakeLock = null;
 async function requestWakeLock() {
     try {
@@ -95,7 +105,9 @@ document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible' && wakeLock === null) await requestWakeLock();
 });
 
+// ============================================================
 // UTILITAIRES
+// ============================================================
 function calcDistance(lat1, lng1, lat2, lng2) {
     const R = 6371000;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -132,7 +144,9 @@ function calcBearing(lat1, lng1, lat2, lng2) {
     return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 }
 
+// ============================================================
 // ADRESSE
+// ============================================================
 async function getAddress(lat, lng) {
     const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
     if (GEOCODE_CACHE[key]) return GEOCODE_CACHE[key];
@@ -150,7 +164,9 @@ async function getAddress(lat, lng) {
     } catch (e) { return ''; }
 }
 
-// BIP
+// ============================================================
+// BIP SONORE
+// ============================================================
 let audioContext = null;
 function playBeep() {
     try {
@@ -168,7 +184,9 @@ function playBeep() {
     } catch (e) {}
 }
 
+// ============================================================
 // ENVOI ADMIN
+// ============================================================
 let adminInterval = null;
 let adminLastSent = null;
 let isSendingAdmin = false;
@@ -231,7 +249,9 @@ function startAdminSharing() {
     adminInterval = setInterval(sendAdminPosition, SEND_INTERVAL);
 }
 
+// ============================================================
 // STOCKAGE
+// ============================================================
 const markers = {};
 const trails = {};
 const histories = {};
@@ -256,7 +276,9 @@ function getColor(uid) {
     return markers[uid].color;
 }
 
+// ============================================================
 // ICÔNE
+// ============================================================
 function createIcon(color, name, bearing, isMe) {
     const arrow = bearing !== null ? getArrow(bearing) : '';
     return L.divIcon({
@@ -269,7 +291,9 @@ function createIcon(color, name, bearing, isMe) {
     });
 }
 
+// ============================================================
 // TRAJECTOIRE
+// ============================================================
 function updateTrail(uid, lat, lng, color) {
     if (!histories[uid]) histories[uid] = [];
     const h = histories[uid];
@@ -288,7 +312,9 @@ function updateTrail(uid, lat, lng, color) {
     }
 }
 
+// ============================================================
 // WHATSAPP
+// ============================================================
 function callWhatsAppDirect(uid) {
     const phone = whatsappNumbers[uid];
     const marker = markers[uid];
@@ -300,7 +326,9 @@ function callWhatsAppDirect(uid) {
     updateStatusBar(`📞 WhatsApp ouvert vers ${name}`, '#25d366');
 }
 
+// ============================================================
 // ITINÉRAIRE OSRM
+// ============================================================
 function showRouteTo(targetUserId) {
     const me = markers[userId];
     const target = markers[targetUserId];
@@ -333,7 +361,9 @@ function clearRoute() {
     }
 }
 
-// FILTRES
+// ============================================================
+// FILTRES ET TRI
+// ============================================================
 function setFilter(filter) {
     currentFilter = filter;
     document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -367,7 +397,9 @@ function applyFilterAndSort(positions) {
     return filtered;
 }
 
+// ============================================================
 // LISTE
+// ============================================================
 function updateUsersList(positions) {
     const list = document.getElementById('userList');
     const countEl = document.getElementById('userCount');
@@ -431,7 +463,9 @@ function updateUsersList(positions) {
     });
 }
 
+// ============================================================
 // CARTE
+// ============================================================
 function updateMap(positions) {
     const activeIds = new Set();
     positions.forEach(p => {
@@ -497,7 +531,9 @@ function updateMap(positions) {
     });
 }
 
+// ============================================================
 // ACTIONS
+// ============================================================
 function focusUser(uid) {
     if (markers[uid]) {
         map.setView(markers[uid].marker.getLatLng(), 17, { animate: true });
@@ -555,7 +591,9 @@ function updateClock() {
     if (el) el.textContent = new Date().toLocaleTimeString('fr-FR');
 }
 
+// ============================================================
 // REFRESH
+// ============================================================
 let attempts = 0;
 async function fetchPositions() {
     try {
@@ -578,7 +616,9 @@ async function fetchPositions() {
     }
 }
 
+// ============================================================
 // DÉMARRAGE
+// ============================================================
 updateClock();
 setInterval(updateClock, 1000);
 startAdminSharing();
