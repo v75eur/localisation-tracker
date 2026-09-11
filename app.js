@@ -1,5 +1,5 @@
 // ============================================================
-// TRACKER GPS - Version complète améliorée
+// TRACKER GPS - Version complète finale
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
@@ -14,18 +14,14 @@ const GEOCODE_CACHE = {};
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
 
-// ============================================================
 // CARTE
-// ============================================================
 const map = L.map('map', { maxZoom: MAX_ZOOM, zoomControl: false }).setView([6.13, 1.22], 15);
-
 const planLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap', maxZoom: MAX_ZOOM, maxNativeZoom: 19
 });
 const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     attribution: '&copy; Esri', maxZoom: MAX_ZOOM, maxNativeZoom: 19
 });
-
 let currentMode = 'plan';
 planLayer.addTo(map);
 
@@ -42,16 +38,13 @@ function toggleSatellite() {
         document.getElementById('satBtn').innerHTML = '<i class="fas fa-satellite"></i>';
     }
 }
-
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
-// ============================================================
-// FILTRE KALMAN
-// ============================================================
+// KALMAN
 class KalmanFilter {
     constructor() { this.reset(); }
     reset() { this.lat = null; this.lng = null; this.variance = -1; }
@@ -69,12 +62,9 @@ class KalmanFilter {
         return { lat: this.lat, lng: this.lng };
     }
 }
-
 const kalmanFilters = {};
 
-// ============================================================
 // THÈME
-// ============================================================
 function toggleTheme() {
     document.body.classList.toggle('light');
     const icon = document.getElementById('themeIcon');
@@ -86,18 +76,14 @@ if (localStorage.getItem('tracker_theme') === 'light') {
     document.getElementById('themeIcon').className = 'fas fa-sun';
 }
 
-// ============================================================
 // ID ADMIN
-// ============================================================
 let userId = localStorage.getItem('tracker_user_id');
 if (!userId) {
     userId = 'admin_' + Math.random().toString(36).substring(2, 10);
     localStorage.setItem('tracker_user_id', userId);
 }
 
-// ============================================================
 // WAKE LOCK
-// ============================================================
 let wakeLock = null;
 async function requestWakeLock() {
     try {
@@ -109,9 +95,7 @@ document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible' && wakeLock === null) await requestWakeLock();
 });
 
-// ============================================================
 // UTILITAIRES
-// ============================================================
 function calcDistance(lat1, lng1, lat2, lng2) {
     const R = 6371000;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -148,9 +132,7 @@ function calcBearing(lat1, lng1, lat2, lng2) {
     return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 }
 
-// ============================================================
 // ADRESSE
-// ============================================================
 async function getAddress(lat, lng) {
     const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
     if (GEOCODE_CACHE[key]) return GEOCODE_CACHE[key];
@@ -168,9 +150,7 @@ async function getAddress(lat, lng) {
     } catch (e) { return ''; }
 }
 
-// ============================================================
-// BIP SONORE
-// ============================================================
+// BIP
 let audioContext = null;
 function playBeep() {
     try {
@@ -188,9 +168,7 @@ function playBeep() {
     } catch (e) {}
 }
 
-// ============================================================
 // ENVOI ADMIN
-// ============================================================
 let adminInterval = null;
 let adminLastSent = null;
 let isSendingAdmin = false;
@@ -231,7 +209,7 @@ async function sendAdminPosition() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                user_id: userId, name: 'Admin',
+                user_id: userId, name: 'Admin', whatsapp: '',
                 lat: filtered.lat, lng: filtered.lng,
                 speed: pos.coords.speed || 0, accuracy: acc,
                 heading: pos.coords.heading || 0, altitude: pos.coords.altitude || 0
@@ -253,9 +231,7 @@ function startAdminSharing() {
     adminInterval = setInterval(sendAdminPosition, SEND_INTERVAL);
 }
 
-// ============================================================
 // STOCKAGE
-// ============================================================
 const markers = {};
 const trails = {};
 const histories = {};
@@ -265,6 +241,7 @@ const knownUsers = new Set();
 const maxSpeeds = {};
 const userStatuses = {};
 const bearings = {};
+const whatsappNumbers = {};
 const colors = ['#00d4ff', '#7b2ffc', '#ff5f57', '#ffbd2e', '#28c840', '#ff8c00', '#00ff88', '#ff00ff', '#ff69b4', '#00ced1'];
 let colorIndex = 0;
 let currentFilter = 'all';
@@ -279,9 +256,7 @@ function getColor(uid) {
     return markers[uid].color;
 }
 
-// ============================================================
-// ICÔNE AVEC FLÈCHE DIRECTIONNELLE
-// ============================================================
+// ICÔNE
 function createIcon(color, name, bearing, isMe) {
     const arrow = bearing !== null ? getArrow(bearing) : '';
     return L.divIcon({
@@ -294,9 +269,7 @@ function createIcon(color, name, bearing, isMe) {
     });
 }
 
-// ============================================================
 // TRAJECTOIRE
-// ============================================================
 function updateTrail(uid, lat, lng, color) {
     if (!histories[uid]) histories[uid] = [];
     const h = histories[uid];
@@ -315,52 +288,41 @@ function updateTrail(uid, lat, lng, color) {
     }
 }
 
-// ============================================================
-// ITINÉRAIRE OSRM (chemin réel vers un utilisateur)
-// ============================================================
+// WHATSAPP
+function callWhatsAppDirect(uid) {
+    const phone = whatsappNumbers[uid];
+    const marker = markers[uid];
+    if (!phone) { alert('Numéro WhatsApp non disponible'); return; }
+    const name = marker?.name || 'Utilisateur';
+    const message = encodeURIComponent(`Bonjour ${name}, je te contacte depuis le tracker GPS.`);
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    window.open(`https://wa.me/${cleanPhone}?text=${message}`, '_blank');
+    updateStatusBar(`📞 WhatsApp ouvert vers ${name}`, '#25d366');
+}
+
+// ITINÉRAIRE OSRM
 function showRouteTo(targetUserId) {
     const me = markers[userId];
     const target = markers[targetUserId];
-    if (!me || !target) {
-        updateStatusBar('❌ Position manquante pour l\'itinéraire', '#ff5f57');
-        return;
-    }
-    
-    // Supprimer l'ancien itinéraire
-    if (routingControl) {
-        map.removeControl(routingControl);
-        routingControl = null;
-    }
-    
+    if (!me || !target) { updateStatusBar('❌ Position manquante', '#ff5f57'); return; }
+    if (routingControl) { map.removeControl(routingControl); routingControl = null; }
     const mePos = me.marker.getLatLng();
     const targetPos = target.marker.getLatLng();
     const targetName = target.name || 'Utilisateur';
-    
     routingControl = L.Routing.control({
-        waypoints: [
-            L.latLng(mePos.lat, mePos.lng),
-            L.latLng(targetPos.lat, targetPos.lng)
-        ],
-        routeWhileDragging: false,
-        addWaypoints: false,
-        fitSelectedRoutes: true,
-        showAlternatives: false,
-        lineOptions: {
-            styles: [{ color: '#ffd700', weight: 4, opacity: 0.8 }]
-        },
+        waypoints: [L.latLng(mePos.lat, mePos.lng), L.latLng(targetPos.lat, targetPos.lng)],
+        routeWhileDragging: false, addWaypoints: false, fitSelectedRoutes: true, showAlternatives: false,
+        lineOptions: { styles: [{ color: '#ffd700', weight: 4, opacity: 0.8 }] },
         createMarker: function() { return null; },
-        language: 'fr',
-        show: false
+        language: 'fr', show: false
     }).addTo(map);
-    
     routingControl.on('routesfound', function(e) {
         const route = e.routes[0];
         const dist = (route.summary.totalDistance / 1000).toFixed(2);
         const time = Math.round(route.summary.totalTime / 60);
         updateStatusBar(`🛣️ Vers ${targetName}: ${dist} km — ${time} min`, '#ffd700');
     });
-    
-    updateStatusBar(`🛣️ Calcul de l'itinéraire vers ${targetName}...`, '#ffbd2e');
+    updateStatusBar(`🛣️ Calcul vers ${targetName}...`, '#ffbd2e');
 }
 
 function clearRoute() {
@@ -371,9 +333,7 @@ function clearRoute() {
     }
 }
 
-// ============================================================
-// FILTRES ET TRI
-// ============================================================
+// FILTRES
 function setFilter(filter) {
     currentFilter = filter;
     document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -381,7 +341,6 @@ function setFilter(filter) {
     });
     fetchPositions();
 }
-
 function setSort(sort) {
     currentSort = sort;
     document.querySelectorAll('.sort-btn').forEach(btn => {
@@ -389,13 +348,11 @@ function setSort(sort) {
     });
     fetchPositions();
 }
-
 function applyFilterAndSort(positions) {
     let filtered = [...positions];
     if (currentFilter === 'active') filtered = filtered.filter(p => p.age_seconds < 10);
     else if (currentFilter === 'mobile') filtered = filtered.filter(p => userStatuses[p.user_id] === 'mobile');
     else if (currentFilter === 'immobile') filtered = filtered.filter(p => userStatuses[p.user_id] === 'immobile');
-    
     filtered.sort((a, b) => {
         if (a.user_id === userId) return -1;
         if (b.user_id === userId) return 1;
@@ -410,17 +367,13 @@ function applyFilterAndSort(positions) {
     return filtered;
 }
 
-// ============================================================
 // LISTE
-// ============================================================
 function updateUsersList(positions) {
     const list = document.getElementById('userList');
     const countEl = document.getElementById('userCount');
     if (countEl) countEl.textContent = positions.length;
     if (!list) return;
-    
     const filtered = applyFilterAndSort(positions);
-    
     let html = `
         <div class="filters-bar">
             <button class="filter-btn ${currentFilter === 'all' ? 'active' : ''}" data-filter="all" onclick="setFilter('all')">Tous</button>
@@ -435,7 +388,6 @@ function updateUsersList(positions) {
             <button class="sort-btn ${currentSort === 'distance' ? 'active' : ''}" onclick="setSort('distance')">📏 Distance</button>
         </div>
     `;
-    
     if (filtered.length === 0) {
         html += '<div class="empty"><i class="fas fa-satellite-dish"></i>Aucun résultat</div>';
     } else {
@@ -450,7 +402,7 @@ function updateUsersList(positions) {
             const totalDist = totalDistances[p.user_id] || 0;
             const status = userStatuses[p.user_id] || 'immobile';
             const arrow = bearings[p.user_id] ? getArrow(bearings[p.user_id]) : '';
-            
+            const wa = p.whatsapp || '';
             return `<div class="user-item ${isMe ? 'me' : ''}" onclick="selectUser('${p.user_id}')">
                 <div class="avatar" style="background:${color}">${p.name.charAt(0).toUpperCase()}</div>
                 <div class="info">
@@ -459,6 +411,7 @@ function updateUsersList(positions) {
                         <span class="status-badge status-${status}">${status === 'mobile' ? '🚶' : '⏸️'}</span>
                     </div>
                     <div class="address">📍 ${addr}</div>
+                    ${wa ? `<div class="whatsapp-line">📱 ${wa}</div>` : ''}
                     <div class="coords">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</div>
                     <div class="meta">
                         <span><i class="fas fa-clock"></i> ${ageText}</span>
@@ -470,9 +423,7 @@ function updateUsersList(positions) {
             </div>`;
         }).join('');
     }
-    
     list.innerHTML = html;
-    
     filtered.forEach(p => {
         if (!addresses[p.user_id]) {
             getAddress(p.lat, p.lng).then(a => { if (a) addresses[p.user_id] = a; });
@@ -480,14 +431,12 @@ function updateUsersList(positions) {
     });
 }
 
-// ============================================================
 // CARTE
-// ============================================================
 function updateMap(positions) {
     const activeIds = new Set();
     positions.forEach(p => {
         activeIds.add(p.user_id);
-        
+        if (p.whatsapp) whatsappNumbers[p.user_id] = p.whatsapp;
         if (!knownUsers.has(p.user_id)) {
             knownUsers.add(p.user_id);
             if (p.user_id !== userId) {
@@ -495,19 +444,15 @@ function updateMap(positions) {
                 updateStatusBar(`🔔 Nouvel utilisateur: ${p.name}`, '#28c840');
             }
         }
-        
         const speedKmh = (p.speed || 0) * 3.6;
         if (!maxSpeeds[p.user_id] || speedKmh > maxSpeeds[p.user_id]) {
             maxSpeeds[p.user_id] = speedKmh;
         }
         userStatuses[p.user_id] = speedKmh > 1 ? 'mobile' : 'immobile';
-        
         const color = getColor(p.user_id);
         const isMe = p.user_id === userId;
-        
         if (!kalmanFilters[p.user_id]) kalmanFilters[p.user_id] = new KalmanFilter();
         const smooth = kalmanFilters[p.user_id].process(p.lat, p.lng, p.accuracy || 10);
-        
         let bearing = null;
         if (histories[p.user_id]?.length > 0) {
             const last = histories[p.user_id][histories[p.user_id].length - 1];
@@ -516,21 +461,22 @@ function updateMap(positions) {
                 bearings[p.user_id] = bearing;
             }
         }
-        
         if (markers[p.user_id]) {
             markers[p.user_id].marker.setLatLng([smooth.lat, smooth.lng]);
             markers[p.user_id].marker.setIcon(createIcon(color, p.name, bearing, isMe));
         } else {
             const marker = L.marker([smooth.lat, smooth.lng], { icon: createIcon(color, p.name, bearing, isMe) }).addTo(map);
+            const wa = p.whatsapp || '';
             const popupContent = `
                 <div style="font-family:sans-serif;min-width:200px;">
                     <b>${p.name}${isMe ? ' ⭐' : ''}</b><br>
                     <span style="color:#00d4ff;">${smooth.lat.toFixed(5)}, ${smooth.lng.toFixed(5)}</span><br>
                     🎯 Précision: ±${Math.round(p.accuracy || 0)}m<br>
                     ${speedKmh > 0.5 ? `🚀 Vitesse: ${speedKmh.toFixed(1)} km/h<br>` : ''}
+                    ${wa ? `📱 WhatsApp: ${wa}<br>` : ''}
                     ${!isMe ? `
                         <button onclick="showRouteTo('${p.user_id}')" style="margin-top:8px;padding:6px 12px;background:#ffd700;color:#000;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🛣️ Itinéraire</button>
-                        <button onclick="callWhatsApp('${p.user_id}')" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#25d366;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📞 WhatsApp</button>
+                        ${wa ? `<button onclick="callWhatsAppDirect('${p.user_id}')" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#25d366;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📞 WhatsApp</button>` : ''}
                     ` : ''}
                     <button onclick="openGoogleMaps(${smooth.lat}, ${smooth.lng})" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#4285f4;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🗺️ Maps</button>
                 </div>
@@ -538,10 +484,8 @@ function updateMap(positions) {
             marker.bindPopup(popupContent);
             markers[p.user_id] = { marker, color, name: p.name };
         }
-        
         updateTrail(p.user_id, smooth.lat, smooth.lng, color);
     });
-    
     Object.keys(markers).forEach(uid => {
         if (!activeIds.has(uid)) {
             map.removeLayer(markers[uid].marker);
@@ -553,9 +497,7 @@ function updateMap(positions) {
     });
 }
 
-// ============================================================
 // ACTIONS
-// ============================================================
 function focusUser(uid) {
     if (markers[uid]) {
         map.setView(markers[uid].marker.getLatLng(), 17, { animate: true });
@@ -564,7 +506,6 @@ function focusUser(uid) {
 }
 function selectUser(uid) {
     focusUser(uid);
-    // Si c'est un autre utilisateur, proposer l'itinéraire
     if (uid !== userId) {
         setTimeout(() => {
             if (confirm('🛣️ Afficher l\'itinéraire vers cette personne ?')) {
@@ -573,29 +514,13 @@ function selectUser(uid) {
         }, 500);
     }
 }
-function callWhatsApp(uid) {
-    const marker = markers[uid];
-    if (!marker) return;
-    
-    // Demander le numéro WhatsApp de la personne
-    const phone = prompt(`📞 Numéro WhatsApp de ${marker.name} (format international, ex: +229XXXXXXXX):`);
-    if (!phone) return;
-    
-    // Nettoyer le numéro
-    const cleanPhone = phone.replace(/[^0-9]/g, '');
-    const message = encodeURIComponent(`Bonjour ${marker.name}, je te contacte depuis le tracker GPS.`);
-    const whatsappUrl = `https://wa.me/${cleanPhone}?text=${message}`;
-    
-    window.open(whatsappUrl, '_blank');
-    updateStatusBar(`📞 WhatsApp ouvert vers ${marker.name}`, '#25d366');
-}
 function openGoogleMaps(lat, lng) {
     window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank');
 }
 function resetView() { map.setView([6.13, 1.22], 2, { animate: true }); }
 function followMe() {
     if (markers[userId]) map.setView(markers[userId].marker.getLatLng(), 18, { animate: true });
-    else alert('Position en cours de détection... Attends 30 secondes.');
+    else alert('Position en cours...');
 }
 function fitAll() {
     const latlngs = Object.values(markers).map(m => m.marker.getLatLng());
@@ -630,9 +555,7 @@ function updateClock() {
     if (el) el.textContent = new Date().toLocaleTimeString('fr-FR');
 }
 
-// ============================================================
 // REFRESH
-// ============================================================
 let attempts = 0;
 async function fetchPositions() {
     try {
@@ -655,9 +578,7 @@ async function fetchPositions() {
     }
 }
 
-// ============================================================
 // DÉMARRAGE
-// ============================================================
 updateClock();
 setInterval(updateClock, 1000);
 startAdminSharing();
@@ -665,13 +586,3 @@ fetchPositions();
 setInterval(fetchPositions, REFRESH_INTERVAL);
 
 console.log('%c 📍 Tracker GPS COMPLET ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
-console.log('%c Fonctionnalités:', 'color:#28c840;font-weight:bold');
-console.log('• Ta position Admin ⭐');
-console.log('• Toutes les positions');
-console.log('• Itinéraire réel OSRM (clic utilisateur)');
-console.log('• Flèches directionnelles');
-console.log('• Bouton WhatsApp');
-console.log('• Kalman + précision max');
-console.log('• Trajectoires propres');
-console.log('• Filtres + tri');
-console.log('• Adresses + Google Maps');

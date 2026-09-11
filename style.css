@@ -48,6 +48,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .user-item .info{flex:1;min-width:0}
 .user-item .name{font-size:.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:.4rem}
 .user-item .address{font-size:.65rem;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:.15rem}
+.user-item .whatsapp-line{font-size:.65rem;color:#25d366;margin-top:.15rem;font-family:monospace}
 .user-item .coords{font-size:.6rem;color:var(--text-dim);font-family:monospace}
 .user-item .meta{display:flex;gap:.5rem;font-size:.6rem;color:var(--text-dim);margin-top:.25rem;flex-wrap:wrap}
 .user-item .meta span{display:flex;align-items:center;gap:.2rem}
