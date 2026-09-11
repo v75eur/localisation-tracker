@@ -7,6 +7,7 @@
     <title>Tracker GPS Live</title>
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -29,6 +30,7 @@
         <button onclick="resetView()" title="Vue globale"><i class="fas fa-globe"></i></button>
         <button onclick="followMe()" title="Ma position"><i class="fas fa-crosshairs"></i></button>
         <button onclick="fitAll()" title="Tout voir"><i class="fas fa-users"></i></button>
+        <button onclick="clearRoute()" title="Effacer itinéraire"><i class="fas fa-route"></i></button>
         <button onclick="toggleFullscreen()" title="Plein écran"><i class="fas fa-expand"></i></button>
         <button onclick="toggleSatellite()" id="satBtn" title="Satellite"><i class="fas fa-satellite"></i></button>
         <button onclick="exportGPX()" title="Export GPX"><i class="fas fa-download"></i></button>
@@ -49,7 +51,7 @@
     <div class="status-bar" id="statusBar">⏳ Initialisation...</div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-    <script src="https://unpkg.com/easy-call-engine@latest/dist/easycall.min.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

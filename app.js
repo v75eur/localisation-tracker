@@ -1,5 +1,5 @@
 // ============================================================
-// TRACKER GPS LIVE - Version complète finale
+// TRACKER GPS - Version complète améliorée
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
@@ -7,10 +7,9 @@ const REFRESH_INTERVAL = 2000;
 const SEND_INTERVAL = 2000;
 const TRAIL_MAX_POINTS = 150;
 const MAX_ZOOM = 21;
-const MAX_ACCURACY = 20;
+const MAX_ACCURACY = 30;
 const TRAIL_MIN_MOVE = 8;
 const MIN_MOVE_UPDATE = 2;
-const PRECISION_SAMPLES = 5;
 const GEOCODE_CACHE = {};
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
@@ -71,45 +70,7 @@ class KalmanFilter {
     }
 }
 
-// ============================================================
-// FILTRE STABILITÉ
-// ============================================================
-class StabilityFilter {
-    constructor() {
-        this.samples = [];
-        this.lastStable = null;
-    }
-    add(lat, lng, accuracy) {
-        if (accuracy > 25) return null;
-        this.samples.push({ lat, lng, accuracy });
-        if (this.samples.length > 8) this.samples.shift();
-        
-        let totalWeight = 0, weightedLat = 0, weightedLng = 0, totalAcc = 0;
-        for (const s of this.samples) {
-            const weight = 1 / (s.accuracy * s.accuracy);
-            totalWeight += weight;
-            weightedLat += s.lat * weight;
-            weightedLng += s.lng * weight;
-            totalAcc += s.accuracy;
-        }
-        if (totalWeight === 0) return null;
-        
-        const avgLat = weightedLat / totalWeight;
-        const avgLng = weightedLng / totalWeight;
-        const avgAcc = totalAcc / this.samples.length;
-        
-        if (this.lastStable) {
-            const dist = calcDistance(this.lastStable.lat, this.lastStable.lng, avgLat, avgLng);
-            if (dist < 5) return { ...this.lastStable, unchanged: true };
-        }
-        
-        this.lastStable = { lat: avgLat, lng: avgLng, accuracy: avgAcc };
-        return this.lastStable;
-    }
-}
-
 const kalmanFilters = {};
-const stabilityFilters = {};
 
 // ============================================================
 // THÈME
@@ -228,69 +189,6 @@ function playBeep() {
 }
 
 // ============================================================
-// TALKIE-WALKIE
-// ============================================================
-let callEngine = null;
-let currentCall = null;
-
-function initCall() {
-    if (typeof EasyCall !== 'undefined') {
-        callEngine = new EasyCall({ stunServers: ['stun:stun.l.google.com:19302'] });
-        callEngine.on('incoming', (call) => {
-            const callerName = call.metadata?.name || 'Inconnu';
-            if (confirm(`📞 ${callerName} vous appelle. Accepter ?`)) {
-                call.answer();
-                currentCall = call;
-                showCallUI(callerName);
-                call.on('ended', () => hideCallUI());
-            } else call.reject();
-        });
-    }
-}
-
-async function callUser(targetUserId) {
-    if (!callEngine) return alert('Talkie-walkie non prêt');
-    const target = markers[targetUserId];
-    if (!target) return;
-    try {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-        currentCall = await callEngine.call(targetUserId, { metadata: { name: 'Admin' } });
-        showCallUI(target.name || 'Utilisateur');
-        currentCall.on('connected', () => updateStatusBar(`📞 Connecté à ${target.name}`, '#28c840'));
-        currentCall.on('ended', () => { hideCallUI(); updateStatusBar('📞 Appel terminé', '#ffbd2e'); });
-        currentCall.on('error', (e) => { updateStatusBar('❌ ' + e.message, '#ff5f57'); setTimeout(hideCallUI, 3000); });
-    } catch (e) { alert('Micro refusé: ' + e.message); }
-}
-
-function endCall() {
-    if (currentCall) { currentCall.end(); currentCall = null; hideCallUI(); }
-}
-
-function showCallUI(name) {
-    let ui = document.getElementById('callUI');
-    if (!ui) {
-        ui = document.createElement('div');
-        ui.id = 'callUI';
-        ui.className = 'call-ui';
-        ui.innerHTML = `
-            <div class="call-avatar">📞</div>
-            <div style="font-size:1.2rem;font-weight:700;margin-bottom:.5rem;" id="callName"></div>
-            <div style="color:rgba(255,255,255,.5);font-size:.9rem;">Appel en cours...</div>
-            <button class="call-btn-end" onclick="endCall()"><i class="fas fa-phone-slash"></i> Raccrocher</button>
-        `;
-        document.body.appendChild(ui);
-    }
-    document.getElementById('callName').textContent = name;
-    ui.classList.add('show');
-}
-
-function hideCallUI() {
-    const ui = document.getElementById('callUI');
-    if (ui) ui.classList.remove('show');
-    if (currentCall) { currentCall.end(); currentCall = null; }
-}
-
-// ============================================================
 // ENVOI ADMIN
 // ============================================================
 let adminInterval = null;
@@ -366,10 +264,12 @@ const addresses = {};
 const knownUsers = new Set();
 const maxSpeeds = {};
 const userStatuses = {};
+const bearings = {};
 const colors = ['#00d4ff', '#7b2ffc', '#ff5f57', '#ffbd2e', '#28c840', '#ff8c00', '#00ff88', '#ff00ff', '#ff69b4', '#00ced1'];
 let colorIndex = 0;
 let currentFilter = 'all';
 let currentSort = 'age';
+let routingControl = null;
 
 function getColor(uid) {
     if (!markers[uid]) {
@@ -380,13 +280,17 @@ function getColor(uid) {
 }
 
 // ============================================================
-// ICÔNE
+// ICÔNE AVEC FLÈCHE DIRECTIONNELLE
 // ============================================================
 function createIcon(color, name, bearing, isMe) {
+    const arrow = bearing !== null ? getArrow(bearing) : '';
     return L.divIcon({
         className: 'custom-marker',
-        html: `<div class="marker-pin ${isMe ? 'me' : ''}" style="background:${color};"><span>${name.charAt(0).toUpperCase()}</span></div>`,
-        iconSize: [32, 32], iconAnchor: [16, 32]
+        html: `<div class="marker-direction">${arrow}</div>
+               <div class="marker-pin ${isMe ? 'me' : ''}" style="background:${color};">
+                   <span>${name.charAt(0).toUpperCase()}</span>
+               </div>`,
+        iconSize: [32, 42], iconAnchor: [16, 32]
     });
 }
 
@@ -408,6 +312,62 @@ function updateTrail(uid, lat, lng, color) {
     if (trails[uid]) map.removeLayer(trails[uid]);
     if (h.length > 1) {
         trails[uid] = L.polyline(h, { color, weight: 3, opacity: 0.6, smoothFactor: 2 }).addTo(map);
+    }
+}
+
+// ============================================================
+// ITINÉRAIRE OSRM (chemin réel vers un utilisateur)
+// ============================================================
+function showRouteTo(targetUserId) {
+    const me = markers[userId];
+    const target = markers[targetUserId];
+    if (!me || !target) {
+        updateStatusBar('❌ Position manquante pour l\'itinéraire', '#ff5f57');
+        return;
+    }
+    
+    // Supprimer l'ancien itinéraire
+    if (routingControl) {
+        map.removeControl(routingControl);
+        routingControl = null;
+    }
+    
+    const mePos = me.marker.getLatLng();
+    const targetPos = target.marker.getLatLng();
+    const targetName = target.name || 'Utilisateur';
+    
+    routingControl = L.Routing.control({
+        waypoints: [
+            L.latLng(mePos.lat, mePos.lng),
+            L.latLng(targetPos.lat, targetPos.lng)
+        ],
+        routeWhileDragging: false,
+        addWaypoints: false,
+        fitSelectedRoutes: true,
+        showAlternatives: false,
+        lineOptions: {
+            styles: [{ color: '#ffd700', weight: 4, opacity: 0.8 }]
+        },
+        createMarker: function() { return null; },
+        language: 'fr',
+        show: false
+    }).addTo(map);
+    
+    routingControl.on('routesfound', function(e) {
+        const route = e.routes[0];
+        const dist = (route.summary.totalDistance / 1000).toFixed(2);
+        const time = Math.round(route.summary.totalTime / 60);
+        updateStatusBar(`🛣️ Vers ${targetName}: ${dist} km — ${time} min`, '#ffd700');
+    });
+    
+    updateStatusBar(`🛣️ Calcul de l'itinéraire vers ${targetName}...`, '#ffbd2e');
+}
+
+function clearRoute() {
+    if (routingControl) {
+        map.removeControl(routingControl);
+        routingControl = null;
+        updateStatusBar('🗑️ Itinéraire effacé', '#ffbd2e');
     }
 }
 
@@ -453,7 +413,6 @@ function applyFilterAndSort(positions) {
 // ============================================================
 // LISTE
 // ============================================================
-let lastListHTML = '';
 function updateUsersList(positions) {
     const list = document.getElementById('userList');
     const countEl = document.getElementById('userCount');
@@ -489,23 +448,22 @@ function updateUsersList(positions) {
             const accLabel = getAccuracyLabel(p.accuracy || 0);
             const addr = addresses[p.user_id] || '...';
             const totalDist = totalDistances[p.user_id] || 0;
-            const maxSpeed = maxSpeeds[p.user_id] || 0;
             const status = userStatuses[p.user_id] || 'immobile';
+            const arrow = bearings[p.user_id] ? getArrow(bearings[p.user_id]) : '';
             
             return `<div class="user-item ${isMe ? 'me' : ''}" onclick="selectUser('${p.user_id}')">
                 <div class="avatar" style="background:${color}">${p.name.charAt(0).toUpperCase()}</div>
                 <div class="info">
                     <div class="name">
-                        ${p.name} ${isMe ? '⭐' : ''}
-                        <span class="status-badge status-${status}">${status === 'mobile' ? '🚶 Mobile' : '⏸️ Immobile'}</span>
+                        ${arrow} ${p.name} ${isMe ? '⭐' : ''}
+                        <span class="status-badge status-${status}">${status === 'mobile' ? '🚶' : '⏸️'}</span>
                     </div>
                     <div class="address">📍 ${addr}</div>
-                    <div class="coords">${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</div>
+                    <div class="coords">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</div>
                     <div class="meta">
                         <span><i class="fas fa-clock"></i> ${ageText}</span>
                         <span style="color:${accLabel.color}"><i class="fas fa-bullseye"></i> ±${Math.round(p.accuracy || 0)}m</span>
                         ${speedKmh > 0.5 ? `<span><i class="fas fa-tachometer-alt"></i> ${speedKmh.toFixed(1)}km/h</span>` : ''}
-                        ${maxSpeed > 0 ? `<span><i class="fas fa-rocket"></i> Max ${maxSpeed.toFixed(1)}</span>` : ''}
                         ${totalDist > 0 ? `<span><i class="fas fa-route"></i> ${formatDist(totalDist)}</span>` : ''}
                     </div>
                 </div>
@@ -513,15 +471,13 @@ function updateUsersList(positions) {
         }).join('');
     }
     
-    if (html !== lastListHTML) {
-        list.innerHTML = html;
-        lastListHTML = html;
-        filtered.forEach(p => {
-            if (!addresses[p.user_id]) {
-                getAddress(p.lat, p.lng).then(a => { if (a) addresses[p.user_id] = a; });
-            }
-        });
-    }
+    list.innerHTML = html;
+    
+    filtered.forEach(p => {
+        if (!addresses[p.user_id]) {
+            getAddress(p.lat, p.lng).then(a => { if (a) addresses[p.user_id] = a; });
+        }
+    });
 }
 
 // ============================================================
@@ -532,7 +488,6 @@ function updateMap(positions) {
     positions.forEach(p => {
         activeIds.add(p.user_id);
         
-        // Détecter nouveaux utilisateurs
         if (!knownUsers.has(p.user_id)) {
             knownUsers.add(p.user_id);
             if (p.user_id !== userId) {
@@ -541,7 +496,6 @@ function updateMap(positions) {
             }
         }
         
-        // Stats
         const speedKmh = (p.speed || 0) * 3.6;
         if (!maxSpeeds[p.user_id] || speedKmh > maxSpeeds[p.user_id]) {
             maxSpeeds[p.user_id] = speedKmh;
@@ -551,42 +505,41 @@ function updateMap(positions) {
         const color = getColor(p.user_id);
         const isMe = p.user_id === userId;
         
-        // Filtres
         if (!kalmanFilters[p.user_id]) kalmanFilters[p.user_id] = new KalmanFilter();
-        if (!stabilityFilters[p.user_id]) stabilityFilters[p.user_id] = new StabilityFilter();
-        
         const smooth = kalmanFilters[p.user_id].process(p.lat, p.lng, p.accuracy || 10);
-        const stable = stabilityFilters[p.user_id].add(smooth.lat, smooth.lng, p.accuracy || 10);
-        
-        if (!stable) return;
-        if (stable.unchanged && markers[p.user_id]) return;
         
         let bearing = null;
         if (histories[p.user_id]?.length > 0) {
             const last = histories[p.user_id][histories[p.user_id].length - 1];
-            if (last[0] !== stable.lat || last[1] !== stable.lng) {
-                bearing = calcBearing(last[0], last[1], stable.lat, stable.lng);
+            if (last[0] !== smooth.lat || last[1] !== smooth.lng) {
+                bearing = calcBearing(last[0], last[1], smooth.lat, smooth.lng);
+                bearings[p.user_id] = bearing;
             }
         }
         
         if (markers[p.user_id]) {
-            markers[p.user_id].marker.setLatLng([stable.lat, stable.lng]);
+            markers[p.user_id].marker.setLatLng([smooth.lat, smooth.lng]);
             markers[p.user_id].marker.setIcon(createIcon(color, p.name, bearing, isMe));
         } else {
-            const marker = L.marker([stable.lat, stable.lng], { icon: createIcon(color, p.name, bearing, isMe) }).addTo(map);
-            marker.bindPopup(`
-                <div style="font-family:sans-serif;min-width:180px;">
+            const marker = L.marker([smooth.lat, smooth.lng], { icon: createIcon(color, p.name, bearing, isMe) }).addTo(map);
+            const popupContent = `
+                <div style="font-family:sans-serif;min-width:200px;">
                     <b>${p.name}${isMe ? ' ⭐' : ''}</b><br>
-                    <span style="color:#00d4ff;">${stable.lat.toFixed(6)}, ${stable.lng.toFixed(6)}</span><br>
-                    🎯 ±${Math.round(stable.accuracy)}m<br>
-                    <button onclick="callUser('${p.user_id}')" style="margin-top:8px;padding:6px 12px;background:#28c840;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📞 Appeler</button>
-                    <button onclick="openGoogleMaps(${stable.lat}, ${stable.lng})" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#4285f4;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🗺️ Maps</button>
+                    <span style="color:#00d4ff;">${smooth.lat.toFixed(5)}, ${smooth.lng.toFixed(5)}</span><br>
+                    🎯 Précision: ±${Math.round(p.accuracy || 0)}m<br>
+                    ${speedKmh > 0.5 ? `🚀 Vitesse: ${speedKmh.toFixed(1)} km/h<br>` : ''}
+                    ${!isMe ? `
+                        <button onclick="showRouteTo('${p.user_id}')" style="margin-top:8px;padding:6px 12px;background:#ffd700;color:#000;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🛣️ Itinéraire</button>
+                        <button onclick="callWhatsApp('${p.user_id}')" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#25d366;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📞 WhatsApp</button>
+                    ` : ''}
+                    <button onclick="openGoogleMaps(${smooth.lat}, ${smooth.lng})" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#4285f4;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🗺️ Maps</button>
                 </div>
-            `);
+            `;
+            marker.bindPopup(popupContent);
             markers[p.user_id] = { marker, color, name: p.name };
         }
         
-        updateTrail(p.user_id, stable.lat, stable.lng, color);
+        updateTrail(p.user_id, smooth.lat, smooth.lng, color);
     });
     
     Object.keys(markers).forEach(uid => {
@@ -596,7 +549,6 @@ function updateMap(positions) {
             if (trails[uid]) { map.removeLayer(trails[uid]); delete trails[uid]; }
             delete histories[uid];
             delete kalmanFilters[uid];
-            delete stabilityFilters[uid];
         }
     });
 }
@@ -610,14 +562,40 @@ function focusUser(uid) {
         markers[uid].marker.openPopup();
     }
 }
-function selectUser(uid) { focusUser(uid); }
+function selectUser(uid) {
+    focusUser(uid);
+    // Si c'est un autre utilisateur, proposer l'itinéraire
+    if (uid !== userId) {
+        setTimeout(() => {
+            if (confirm('🛣️ Afficher l\'itinéraire vers cette personne ?')) {
+                showRouteTo(uid);
+            }
+        }, 500);
+    }
+}
+function callWhatsApp(uid) {
+    const marker = markers[uid];
+    if (!marker) return;
+    
+    // Demander le numéro WhatsApp de la personne
+    const phone = prompt(`📞 Numéro WhatsApp de ${marker.name} (format international, ex: +229XXXXXXXX):`);
+    if (!phone) return;
+    
+    // Nettoyer le numéro
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const message = encodeURIComponent(`Bonjour ${marker.name}, je te contacte depuis le tracker GPS.`);
+    const whatsappUrl = `https://wa.me/${cleanPhone}?text=${message}`;
+    
+    window.open(whatsappUrl, '_blank');
+    updateStatusBar(`📞 WhatsApp ouvert vers ${marker.name}`, '#25d366');
+}
 function openGoogleMaps(lat, lng) {
     window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank');
 }
 function resetView() { map.setView([6.13, 1.22], 2, { animate: true }); }
 function followMe() {
     if (markers[userId]) map.setView(markers[userId].marker.getLatLng(), 18, { animate: true });
-    else alert('Position en cours...');
+    else alert('Position en cours de détection... Attends 30 secondes.');
 }
 function fitAll() {
     const latlngs = Object.values(markers).map(m => m.marker.getLatLng());
@@ -682,23 +660,18 @@ async function fetchPositions() {
 // ============================================================
 updateClock();
 setInterval(updateClock, 1000);
-initCall();
 startAdminSharing();
 fetchPositions();
 setInterval(fetchPositions, REFRESH_INTERVAL);
 
-console.log('%c 📍 Tracker GPS LIVE - Version complète finale ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
+console.log('%c 📍 Tracker GPS COMPLET ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
 console.log('%c Fonctionnalités:', 'color:#28c840;font-weight:bold');
-console.log('• Position GPS temps réel');
-console.log('• Kalman + Stabilité');
-console.log('• Talkie-walkie EasyCall');
-console.log('• OSRM itinéraire');
-console.log('• Météo Open-Meteo');
-console.log('• PWA installable');
-console.log('• Export GPX');
-console.log('• Thème sombre/clair');
-console.log('• Filtres et tri');
-console.log('• Vitesse max + distance');
-console.log('• Statut mobile/immobile');
-console.log('• Bip sonore');
-console.log('• Google Maps');
+console.log('• Ta position Admin ⭐');
+console.log('• Toutes les positions');
+console.log('• Itinéraire réel OSRM (clic utilisateur)');
+console.log('• Flèches directionnelles');
+console.log('• Bouton WhatsApp');
+console.log('• Kalman + précision max');
+console.log('• Trajectoires propres');
+console.log('• Filtres + tri');
+console.log('• Adresses + Google Maps');
