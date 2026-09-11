@@ -165,7 +165,7 @@ async function getAddress(lat, lng) {
 }
 
 // ============================================================
-// BIP SONORE
+// BIP
 // ============================================================
 let audioContext = null;
 function playBeep() {
