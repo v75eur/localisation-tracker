@@ -47,67 +47,25 @@ if ('serviceWorker' in navigator) {
 }
 
 // ============================================================
-// FILTRE KALMAN INTELLIGENT (reset auto)
+// FILTRE KALMAN
 // ============================================================
 class KalmanFilter {
-    constructor() {
-        this.reset();
-    }
-    reset() {
-        this.lat = null;
-        this.lng = null;
-        this.variance = -1;
-        this.lastUpdate = 0;
-        this.samples = 0;
-    }
+    constructor() { this.reset(); }
+    reset() { this.lat = null; this.lng = null; this.variance = -1; }
     process(lat, lng, accuracy) {
-        const now = Date.now();
-        
-        // Reset si :
-        // - Première position
-        // - Plus de 10 secondes depuis la dernière mise à jour
-        // - Précision > 30m (mauvais GPS)
-        if (this.lat === null || 
-            (now - this.lastUpdate) > 10000 ||
-            accuracy > 30) {
-            this.lat = lat;
-            this.lng = lng;
+        if (this.lat === null) {
+            this.lat = lat; this.lng = lng;
             this.variance = accuracy * accuracy;
-            this.lastUpdate = now;
-            this.samples = 1;
             return { lat, lng };
         }
-        
-        // Calculer la distance depuis la dernière position
-        const dist = Math.sqrt(
-            Math.pow((lat - this.lat) * 111000, 2) +
-            Math.pow((lng - this.lng) * 111000 * Math.cos(lat * Math.PI / 180), 2)
-        );
-        
-        // Si la position saute de plus de 20m en moins de 3 secondes
-        // → c'est du bruit GPS, on reset
-        if (dist > 20 && (now - this.lastUpdate) < 3000) {
-            this.lat = lat;
-            this.lng = lng;
-            this.variance = accuracy * accuracy;
-            this.lastUpdate = now;
-            this.samples = 1;
-            return { lat, lng };
-        }
-        
-        // Filtre Kalman normal
         const variance = this.variance + 0.01;
         const gain = variance / (variance + accuracy * accuracy);
         this.lat = this.lat + gain * (lat - this.lat);
         this.lng = this.lng + gain * (lng - this.lng);
         this.variance = (1 - gain) * variance;
-        this.lastUpdate = now;
-        this.samples++;
-        
         return { lat: this.lat, lng: this.lng };
     }
 }
-
 const kalmanFilters = {};
 
 // ============================================================
