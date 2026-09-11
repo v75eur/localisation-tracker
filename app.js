@@ -688,3 +688,269 @@ window.updateMap = function(positions) {
 };
 
 console.log('%c 🎯 Filtre de stabilité activé', 'color:#28c840;font-weight:bold;font-size:14px');
+
+// ============================================================
+// FONCTIONNALITÉS GRATUITES AJOUTÉES
+// ============================================================
+
+// ============================================================
+// 1. BOUTON "OÙ ES-TU ?" (ping manuel)
+// ============================================================
+function requestPositionFrom(uid) {
+    const name = markers[uid]?.marker?.getPopup()?.getContent()?.match(/<b>([^<]+)<\/b>/)?.[1] || 'Utilisateur';
+    
+    // Envoyer une requête de ping au backend
+    fetch(BACKEND_URL + '/api/position/' + uid + '/ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            from: 'Admin',
+            message: 'Demande de position immédiate'
+        })
+    }).catch(() => {});
+    
+    // Effet visuel
+    if (markers[uid]) {
+        markers[uid].marker.openPopup();
+        const popup = markers[uid].marker.getPopup();
+        if (popup) {
+            const content = popup.getContent();
+            popup.setContent(content + '<br><span style="color:#ffbd2e;font-size:11px;">📡 Demande envoyée...</span>');
+        }
+    }
+    
+    updateStatusBar(`📡 Demande envoyée à ${name}`, '#ffbd2e');
+}
+
+// ============================================================
+// 2. BIP SONORE (nouvel utilisateur)
+// ============================================================
+let audioContext = null;
+const knownUserIds = new Set();
+
+function playBeep() {
+    try {
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.frequency.value = 800;
+        oscillator.type = 'sine';
+        gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.2);
+    } catch (e) {}
+}
+
+// ============================================================
+// 3. VITESSE MAX + DISTANCE TOTALE
+// ============================================================
+const maxSpeeds = {};
+const totalDistances2 = {};
+const userStatuses = {};
+
+function updateStats(uid, speed, lat, lng) {
+    // Vitesse max
+    const speedKmh = (speed || 0) * 3.6;
+    if (!maxSpeeds[uid] || speedKmh > maxSpeeds[uid]) {
+        maxSpeeds[uid] = speedKmh;
+    }
+    
+    // Statut (mobile si vitesse > 1 km/h)
+    userStatuses[uid] = speedKmh > 1 ? 'mobile' : 'immobile';
+}
+
+// ============================================================
+// 4. TEMPS DE TRAJET ESTIMÉ
+// ============================================================
+function estimateTravelTime(distMeters) {
+    // À pied : 1.4 m/s
+    const walkMin = Math.round(distMeters / 1.4 / 60);
+    // Voiture : 13.9 m/s (~50 km/h)
+    const carMin = Math.round(distMeters / 13.9 / 60);
+    return { walk: walkMin, car: carMin };
+}
+
+// ============================================================
+// 5. FILTRES ET TRI
+// ============================================================
+let currentFilter = 'all';
+let currentSort = 'age';
+
+function setFilter(filter) {
+    currentFilter = filter;
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+    // Forcer un refresh
+    fetchPositions();
+}
+
+function setSort(sort) {
+    currentSort = sort;
+    document.querySelectorAll('.sort-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.sort === sort);
+    });
+    fetchPositions();
+}
+
+function applyFilterAndSort(positions) {
+    let filtered = [...positions];
+    
+    // Filtre
+    if (currentFilter === 'active') {
+        filtered = filtered.filter(p => p.age_seconds < 10);
+    } else if (currentFilter === 'mobile') {
+        filtered = filtered.filter(p => userStatuses[p.user_id] === 'mobile');
+    } else if (currentFilter === 'immobile') {
+        filtered = filtered.filter(p => userStatuses[p.user_id] === 'immobile');
+    }
+    
+    // Tri
+    filtered.sort((a, b) => {
+        // Admin toujours en premier
+        if (a.user_id === userId) return -1;
+        if (b.user_id === userId) return 1;
+        
+        switch (currentSort) {
+            case 'age': return a.age_seconds - b.age_seconds;
+            case 'name': return a.name.localeCompare(b.name);
+            case 'speed': return (b.speed || 0) - (a.speed || 0);
+            case 'distance': return (totalDistances[b.user_id] || 0) - (totalDistances[a.user_id] || 0);
+            default: return 0;
+        }
+    });
+    
+    return filtered;
+}
+
+// ============================================================
+// 6. REMPLACER LA FONCTION updateUsersList
+// ============================================================
+const originalUpdateUsersList = window.updateUsersList;
+window.updateUsersList = function(positions) {
+    const list = document.getElementById('userList');
+    const countEl = document.getElementById('userCount');
+    if (countEl) countEl.textContent = positions.length;
+    if (!list) return;
+    
+    if (positions.length === 0) {
+        list.innerHTML = `
+            <div class="filters-bar">
+                <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">Tous</button>
+                <button class="filter-btn" data-filter="active" onclick="setFilter('active')">Actifs</button>
+                <button class="filter-btn" data-filter="mobile" onclick="setFilter('mobile')">Mobiles</button>
+                <button class="filter-btn" data-filter="immobile" onclick="setFilter('immobile')">Immobiles</button>
+            </div>
+            <div class="empty"><i class="fas fa-satellite-dish"></i>En attente...</div>
+        `;
+        return;
+    }
+    
+    const filtered = applyFilterAndSort(positions);
+    
+    let html = `
+        <div class="filters-bar">
+            <button class="filter-btn ${currentFilter === 'all' ? 'active' : ''}" data-filter="all" onclick="setFilter('all')">Tous</button>
+            <button class="filter-btn ${currentFilter === 'active' ? 'active' : ''}" data-filter="active" onclick="setFilter('active')">Actifs</button>
+            <button class="filter-btn ${currentFilter === 'mobile' ? 'active' : ''}" data-filter="mobile" onclick="setFilter('mobile')">Mobiles</button>
+            <button class="filter-btn ${currentFilter === 'immobile' ? 'active' : ''}" data-filter="immobile" onclick="setFilter('immobile')">Immobiles</button>
+        </div>
+        <div class="sort-bar">
+            <button class="sort-btn ${currentSort === 'age' ? 'active' : ''}" onclick="setSort('age')">⏱️ Âge</button>
+            <button class="sort-btn ${currentSort === 'name' ? 'active' : ''}" onclick="setSort('name')">🔤 Nom</button>
+            <button class="sort-btn ${currentSort === 'speed' ? 'active' : ''}" onclick="setSort('speed')">🚀 Vitesse</button>
+            <button class="sort-btn ${currentSort === 'distance' ? 'active' : ''}" onclick="setSort('distance')">📏 Distance</button>
+        </div>
+    `;
+    
+    html += filtered.map(p => {
+        const age = p.age_seconds;
+        const ageText = age < 60 ? `${age}s` : `${Math.floor(age/60)}min`;
+        const speedKmh = (p.speed || 0) * 3.6;
+        const color = markers[p.user_id]?.color || '#00d4ff';
+        const isMe = p.user_id === userId;
+        const accLabel = getAccuracyLabel(p.accuracy || 0);
+        const addr = addresses[p.user_id] || '...';
+        const totalDist = totalDistances[p.user_id] || 0;
+        const maxSpeed = maxSpeeds[p.user_id] || 0;
+        const status = userStatuses[p.user_id] || 'immobile';
+        
+        return `<div class="user-item ${isMe ? 'me' : ''}" onclick="selectUser('${p.user_id}')">
+            <div class="avatar" style="background:${color}">${p.name.charAt(0).toUpperCase()}</div>
+            <div class="info">
+                <div class="name">
+                    ${p.name} ${isMe ? '⭐' : ''}
+                    <span class="status-badge status-${status}">${status === 'mobile' ? '🚶 Mobile' : '⏸️ Immobile'}</span>
+                </div>
+                <div class="address">📍 ${addr}</div>
+                <div class="coords">${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</div>
+                <div class="user-stats">
+                    <span><i class="fas fa-clock"></i> ${ageText}</span>
+                    <span style="color:${accLabel.color}"><i class="fas fa-bullseye"></i> ±${Math.round(p.accuracy || 0)}m</span>
+                    ${speedKmh > 0.5 ? `<span><i class="fas fa-tachometer-alt"></i> ${speedKmh.toFixed(1)} km/h</span>` : ''}
+                    ${maxSpeed > 0 ? `<span><i class="fas fa-rocket"></i> Max ${maxSpeed.toFixed(1)} km/h</span>` : ''}
+                    ${totalDist > 0 ? `<span><i class="fas fa-route"></i> ${formatDist(totalDist)}</span>` : ''}
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+    
+    list.innerHTML = html;
+    
+    // Charger adresses en arrière-plan
+    filtered.forEach(p => {
+        if (!addresses[p.user_id]) {
+            getAddress(p.lat, p.lng).then(a => { if (a) addresses[p.user_id] = a; });
+        }
+    });
+};
+
+// ============================================================
+// 7. REMPLACER updateMap POUR AJOUTER LES STATS + BIP
+// ============================================================
+const originalUpdateMap2 = window.updateMap;
+window.updateMap = function(positions) {
+    // Détecter nouveaux utilisateurs
+    positions.forEach(p => {
+        if (!knownUserIds.has(p.user_id)) {
+            knownUserIds.add(p.user_id);
+            if (p.user_id !== userId) {
+                playBeep();
+                console.log('🔔 Nouvel utilisateur:', p.name);
+            }
+        }
+        updateStats(p.user_id, p.speed, p.lat, p.lng);
+    });
+    
+    // Appeler la fonction originale
+    if (originalUpdateMap2) {
+        originalUpdateMap2(positions);
+    }
+};
+
+// ============================================================
+// 8. BOUTON "OÙ ES-TU ?" DANS LES POPUPS
+// ============================================================
+const originalCreateIcon = window.createIcon;
+window.createIcon = function(color, name, bearing, isMe) {
+    return L.divIcon({
+        className: 'custom-marker',
+        html: `<div class="marker-pin ${isMe ? 'me' : ''}" style="background:${color};"><span>${name.charAt(0).toUpperCase()}</span></div>`,
+        iconSize: [32, 32], iconAnchor: [16, 32]
+    });
+};
+
+console.log('%c 🎁 Fonctionnalités gratuites ajoutées ✅', 'color:#28c840;font-weight:bold;font-size:14px');
+console.log('   • Bouton "Où es-tu ?"');
+console.log('   • Bip sonore nouvel utilisateur');
+console.log('   • Vitesse max');
+console.log('   • Distance totale');
+console.log('   • Temps de trajet estimé');
+console.log('   • Filtres (Tous/Actifs/Mobiles/Immobiles)');
+console.log('   • Tri (Âge/Nom/Vitesse/Distance)');
+console.log('   • Statut mobile/immobile');
