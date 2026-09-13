@@ -1,5 +1,5 @@
 // ============================================================
-// TRACKER GPS - COMPLET
+// TRACKER GPS - COMPLET (12 boutons)
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
@@ -17,6 +17,7 @@ const PLACES_KEY = 'tracker_places';
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
 
+// CARTE
 const map = L.map('map', { maxZoom: MAX_ZOOM, zoomControl: false }).setView([6.13, 1.22], 15);
 const planLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap', maxZoom: MAX_ZOOM, maxNativeZoom: 19 });
 const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: '&copy; Esri', maxZoom: MAX_ZOOM, maxNativeZoom: 19 });
@@ -37,6 +38,7 @@ function toggleSatellite() {
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
+// KALMAN
 class KalmanFilter {
     constructor() { this.reset(); }
     reset() { this.lat = null; this.lng = null; this.variance = -1; }
@@ -52,6 +54,7 @@ class KalmanFilter {
 }
 const kalmanFilters = {};
 
+// PRÉCISION
 const precisionBuffers = {};
 function smoothPosition(uid, lat, lng, accuracy) {
     if (!precisionBuffers[uid]) precisionBuffers[uid] = [];
@@ -67,6 +70,7 @@ function smoothPosition(uid, lat, lng, accuracy) {
     return { lat: weightedLat / totalWeight, lng: weightedLng / totalWeight, accuracy: totalAcc / buffer.length, samples: buffer.length };
 }
 
+// THÈME
 function toggleTheme() {
     document.body.classList.toggle('light');
     const icon = document.getElementById('themeIcon');
@@ -78,14 +82,17 @@ if (localStorage.getItem('tracker_theme') === 'light') {
     document.getElementById('themeIcon').className = 'fas fa-sun';
 }
 
+// ID ADMIN
 let userId = localStorage.getItem('tracker_user_id');
 if (!userId) { userId = 'admin_' + Math.random().toString(36).substring(2, 10); localStorage.setItem('tracker_user_id', userId); }
 
+// WAKE LOCK
 let wakeLock = null;
 async function requestWakeLock() { try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {} }
 window.addEventListener('load', requestWakeLock);
 document.addEventListener('visibilitychange', async () => { if (document.visibilityState === 'visible' && wakeLock === null) await requestWakeLock(); });
 
+// UTILITAIRES
 function calcDistance(lat1, lng1, lat2, lng2) {
     const R = 6371000;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -104,6 +111,7 @@ function calcBearing(lat1, lng1, lat2, lng2) {
     return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 }
 
+// ADRESSE
 async function getAddress(lat, lng) {
     const key = lat.toFixed(3) + ',' + lng.toFixed(3);
     if (GEOCODE_CACHE[key]) return GEOCODE_CACHE[key];
@@ -118,6 +126,7 @@ async function getAddress(lat, lng) {
     } catch (e) { return ''; }
 }
 
+// MÉTÉO
 async function getWeather(lat, lng) {
     const key = lat.toFixed(2) + ',' + lng.toFixed(2);
     if (WEATHER_CACHE[key]) return WEATHER_CACHE[key];
@@ -142,6 +151,7 @@ async function getWeather(lat, lng) {
     } catch (e) { return ''; }
 }
 
+// BIP
 let audioContext = null;
 function playBeep() {
     try {
@@ -155,6 +165,7 @@ function playBeep() {
     } catch (e) {}
 }
 
+// ENVOI ADMIN
 let adminInterval = null, adminLastSent = null, isSendingAdmin = false;
 const adminFilter = new KalmanFilter();
 
@@ -196,6 +207,7 @@ async function sendAdminPosition() {
 function updateStatusBar(msg, color) { const el = document.getElementById('statusBar'); if (el) { el.textContent = msg; el.style.color = color || '#ffbd2e'; } }
 function startAdminSharing() { if (adminInterval) return; sendAdminPosition(); adminInterval = setInterval(sendAdminPosition, SEND_INTERVAL); }
 
+// ACTUALISER
 async function forceRefresh() {
     const btn = document.getElementById('refreshBtn');
     if (btn) btn.style.animation = 'spin 1s linear infinite';
@@ -205,6 +217,7 @@ async function forceRefresh() {
     setTimeout(() => { if (btn) btn.style.animation = ''; updateStatusBar('✅ Carte actualisée', '#28c840'); }, 1500);
 }
 
+// EXPORT CSV
 function exportCSV() {
     const h = histories[userId];
     if (!h || h.length < 2) { alert('Pas assez de points à exporter'); return; }
@@ -217,6 +230,7 @@ function exportCSV() {
     updateStatusBar('📊 CSV téléchargé (' + h.length + ' points)', '#28c840');
 }
 
+// CAPTURE
 async function captureMap() {
     updateStatusBar('📸 Capture en cours...', '#ffbd2e');
     try {
@@ -241,6 +255,7 @@ async function captureMap() {
     } catch (e) { updateStatusBar('❌ Erreur capture: ' + e.message, '#ff5f57'); }
 }
 
+// STOCKAGE
 const markers = {}, trails = {}, histories = {}, totalDistances = {}, addresses = {}, knownUsers = new Set(), userStatuses = {}, bearings = {}, whatsappNumbers = {};
 const colors = ['#00d4ff', '#7b2ffc', '#ff5f57', '#ffbd2e', '#28c840', '#ff8c00', '#00ff88', '#ff00ff', '#ff69b4', '#00ced1'];
 let colorIndex = 0, currentFilter = 'all', currentSort = 'age';
@@ -248,11 +263,13 @@ let routingControl = null, placeRouteControl = null, targetRouteControl = null;
 
 function getColor(uid) { if (!markers[uid]) { colorIndex = (colorIndex + 1) % colors.length; return colors[colorIndex]; } return markers[uid].color; }
 
+// ICÔNE
 function createIcon(color, name, bearing, isMe) {
     const arrow = bearing !== null ? getArrow(bearing) : '';
     return L.divIcon({ className: 'custom-marker', html: '<div class="marker-direction">' + arrow + '</div><div class="marker-pin ' + (isMe ? 'me' : '') + '" style="background:' + color + ';"><span>' + name.charAt(0).toUpperCase() + '</span></div>', iconSize: [32, 42], iconAnchor: [16, 32] });
 }
 
+// TRAJECTOIRE
 function updateTrail(uid, lat, lng, color) {
     if (!histories[uid]) histories[uid] = [];
     const h = histories[uid];
@@ -262,6 +279,7 @@ function updateTrail(uid, lat, lng, color) {
     if (h.length > 1) trails[uid] = L.polyline(h, { color, weight: 3, opacity: 0.6, smoothFactor: 2 }).addTo(map);
 }
 
+// WHATSAPP
 function callWhatsAppDirect(uid) {
     const phone = whatsappNumbers[uid]; const marker = markers[uid];
     if (!phone) { alert('Numéro WhatsApp non disponible'); return; }
@@ -272,6 +290,7 @@ function callWhatsAppDirect(uid) {
     updateStatusBar('📞 WhatsApp ouvert vers ' + name, '#25d366');
 }
 
+// ITINÉRAIRE UTILISATEUR
 function showRouteTo(targetUserId) {
     const me = markers[userId], target = markers[targetUserId];
     if (!me || !target) { updateStatusBar('❌ Position manquante', '#ff5f57'); return; }
@@ -287,12 +306,13 @@ function showRouteTo(targetUserId) {
     routingControl.on('routesfound', function(e) { const r = e.routes[0]; updateStatusBar('🛣️ Vers ' + targetName + ': ' + (r.summary.totalDistance/1000).toFixed(2) + ' km — ' + Math.round(r.summary.totalTime/60) + ' min', '#ffd700'); });
 }
 
+// CIBLAGE
 let targetMode = false, targetMarker = null;
 function toggleTargetMode() {
     targetMode = !targetMode;
     const btn = document.getElementById('targetBtn');
     if (btn) { btn.style.background = targetMode ? 'rgba(0,212,255,.3)' : ''; btn.style.borderColor = targetMode ? '#00d4ff' : ''; }
-    updateStatusBar(targetMode ? '🎯 Cliquez sur la carte pour cibler' : '📍 Mode normal', targetMode ? '#00d4ff' : '#ffbd2e');
+    updateStatusBar(targetMode ? '🎯 Cliquez sur la carte' : '📍 Mode normal', targetMode ? '#00d4ff' : '#ffbd2e');
     document.body.style.cursor = targetMode ? 'crosshair' : '';
 }
 function createTargetPoint(lat, lng) {
@@ -315,6 +335,7 @@ function routeToTarget(lat, lng) {
 }
 function clearTarget() { if (targetMarker) { map.removeLayer(targetMarker); targetMarker = null; } if (targetRouteControl) { map.removeControl(targetRouteControl); targetRouteControl = null; } updateStatusBar('🗑️ Point ciblé effacé', '#ffbd2e'); }
 
+// LIEUX
 let places = JSON.parse(localStorage.getItem(PLACES_KEY) || '[]'), placeMarkers = {}, placeMode = false;
 function loadPlaces() { places.forEach(p => { addPlaceToMap(p.id, p.name, p.lat, p.lng, false); }); }
 function addPlaceToMap(id, name, lat, lng, save) {
@@ -351,6 +372,7 @@ map.on('click', function(e) {
     if (placeMode) { const id = 'place_' + Date.now(); const name = 'Lieu ' + (places.length + 1); addPlaceToMap(id, name, e.latlng.lat, e.latlng.lng, true); setTimeout(() => { if (placeMarkers[id]) placeMarkers[id].openPopup(); }, 100); placeMode = false; const btn = document.getElementById('placeBtn'); if (btn) { btn.style.background = ''; btn.style.borderColor = ''; } document.body.style.cursor = ''; updateStatusBar('✅ Lieu créé', '#28c840'); }
 });
 
+// AVIONS
 let planesEnabled = false, planesInterval = null, planeMarkers = {};
 const ADSB_MIRRORS = ['https://api.adsb.lol/v2/lat/{lat}/lon/{lng}/dist/{dist}', 'https://api.airplanes.live/v2/point/{lat}/{lng}/{dist}', 'https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lng}/dist/{dist}'];
 function togglePlanes() {
@@ -399,6 +421,7 @@ function updatePlanesOnMap(planes) {
     Object.keys(planeMarkers).forEach(id => { if (!activeIds.has(id)) { map.removeLayer(planeMarkers[id]); delete planeMarkers[id]; } });
 }
 
+// FILTRES
 function setFilter(f) { currentFilter = f; document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === f)); fetchPositions(); }
 function setSort(s) { currentSort = s; document.querySelectorAll('.sort-btn').forEach(b => b.classList.toggle('active', b.dataset.sort === s)); fetchPositions(); }
 function applyFilterAndSort(positions) {
@@ -410,6 +433,7 @@ function applyFilterAndSort(positions) {
     return f;
 }
 
+// LISTE
 function updateUsersList(positions) {
     const list = document.getElementById('userList'), countEl = document.getElementById('userCount');
     if (countEl) countEl.textContent = positions.length;
@@ -433,6 +457,7 @@ function updateUsersList(positions) {
     filtered.forEach(p => { if (!addresses[p.user_id]) { getAddress(p.lat, p.lng).then(a => { if (a) addresses[p.user_id] = a; }); } getWeather(p.lat, p.lng); });
 }
 
+// CARTE
 function updateMap(positions) {
     const activeIds = new Set();
     positions.forEach(p => {
@@ -461,6 +486,7 @@ function updateMap(positions) {
     Object.keys(markers).forEach(uid => { if (!activeIds.has(uid)) { map.removeLayer(markers[uid].marker); delete markers[uid]; if (trails[uid]) { map.removeLayer(trails[uid]); delete trails[uid]; } delete histories[uid]; } });
 }
 
+// ACTIONS
 function focusUser(uid) { if (markers[uid]) { map.setView(markers[uid].marker.getLatLng(), 17, { animate: true }); markers[uid].marker.openPopup(); } }
 function selectUser(uid) { focusUser(uid); if (uid !== userId) setTimeout(() => { if (confirm('🛣️ Afficher l\'itinéraire ?')) showRouteTo(uid); }, 500); }
 function openGoogleMaps(lat, lng) { window.open('https://www.google.com/maps?q=' + lat + ',' + lng, '_blank'); }
@@ -471,6 +497,7 @@ function toggleFullscreen() { if (!document.fullscreenElement) document.document
 function toggleSidebar() { const s = document.querySelector('.sidebar'), i = document.getElementById('toggleIcon'); if (s) { s.classList.toggle('collapsed'); if (i) i.className = s.classList.contains('collapsed') ? 'fas fa-chevron-left' : 'fas fa-chevron-right'; } }
 function updateClock() { const el = document.getElementById('clock'); if (el) el.textContent = new Date().toLocaleTimeString('fr-FR'); }
 
+// REFRESH
 let attempts = 0;
 async function fetchPositions() {
     try {
@@ -488,6 +515,7 @@ async function fetchPositions() {
     }
 }
 
+// DÉMARRAGE
 updateClock();
 setInterval(updateClock, 1000);
 loadPlaces();
@@ -498,13 +526,3 @@ setInterval(() => { sendAdminPosition(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { sendAdminPosition(); fetchPositions(); } });
 
 console.log('%c 📍 Tracker COMPLET ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
-
-function toggleSidebarMobile() {
-    const s = document.querySelector('.sidebar');
-    if (s) s.classList.toggle('open');
-}
-
-function toggleSidebarMobile() {
-    const s = document.querySelector('.sidebar');
-    if (s) s.classList.toggle('open');
-}
