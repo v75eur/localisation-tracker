@@ -1,15 +1,16 @@
 // ============================================================
-// TRACKER GPS - Version complète avec lieux
+// TRACKER GPS - Version ULTRA PRÉCISION + TOUS BOUTONS
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
-const REFRESH_INTERVAL = 1000;
-const SEND_INTERVAL = 1000;
-const TRAIL_MAX_POINTS = 150;
+const REFRESH_INTERVAL = 2000;
+const SEND_INTERVAL = 2000;
+const TRAIL_MAX_POINTS = 200;
 const MAX_ZOOM = 21;
-const MAX_ACCURACY = 30;
-const TRAIL_MIN_MOVE = 8;
-const MIN_MOVE_UPDATE = 2;
+const MAX_ACCURACY = 100;        // ← Accepte jusqu'à 100m (était 30m)
+const TRAIL_MIN_MOVE = 3;        // ← Trajectoire dès 3m (était 8m)
+const MIN_MOVE_UPDATE = 1;       // ← Mise à jour dès 1m
+const PRECISION_SAMPLES = 10;    // ← Moyenne sur 10 positions
 const GEOCODE_CACHE = {};
 const PLACES_KEY = 'tracker_places';
 
@@ -30,13 +31,11 @@ planLayer.addTo(map);
 
 function toggleSatellite() {
     if (currentMode === 'plan') {
-        map.removeLayer(planLayer);
-        satelliteLayer.addTo(map);
+        map.removeLayer(planLayer); satelliteLayer.addTo(map);
         currentMode = 'satellite';
         document.getElementById('satBtn').innerHTML = '<i class="fas fa-map"></i>';
     } else {
-        map.removeLayer(satelliteLayer);
-        planLayer.addTo(map);
+        map.removeLayer(satelliteLayer); planLayer.addTo(map);
         currentMode = 'plan';
         document.getElementById('satBtn').innerHTML = '<i class="fas fa-satellite"></i>';
     }
@@ -45,7 +44,7 @@ L.control.zoom({ position: 'bottomright' }).addTo(map);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 // ============================================================
-// KALMAN
+// FILTRE KALMAN
 // ============================================================
 class KalmanFilter {
     constructor() { this.reset(); }
@@ -61,6 +60,34 @@ class KalmanFilter {
     }
 }
 const kalmanFilters = {};
+
+// ============================================================
+// FILTRE ULTRA PRÉCISION (moyenne pondérée sur 10 positions)
+// ============================================================
+const precisionBuffers = {};
+
+function smoothPosition(uid, lat, lng, accuracy) {
+    if (!precisionBuffers[uid]) precisionBuffers[uid] = [];
+    const buffer = precisionBuffers[uid];
+    buffer.push({ lat, lng, accuracy });
+    if (buffer.length > PRECISION_SAMPLES) buffer.shift();
+    
+    let totalWeight = 0, weightedLat = 0, weightedLng = 0, totalAcc = 0;
+    for (const s of buffer) {
+        const weight = 1 / (s.accuracy * s.accuracy);
+        totalWeight += weight;
+        weightedLat += s.lat * weight;
+        weightedLng += s.lng * weight;
+        totalAcc += s.accuracy;
+    }
+    if (totalWeight === 0) return null;
+    return {
+        lat: weightedLat / totalWeight,
+        lng: weightedLng / totalWeight,
+        accuracy: totalAcc / buffer.length,
+        samples: buffer.length
+    };
+}
 
 // ============================================================
 // THÈME
@@ -174,7 +201,7 @@ function playBeep() {
 }
 
 // ============================================================
-// ENVOI ADMIN
+// ENVOI ADMIN ULTRA PRÉCISION
 // ============================================================
 let adminInterval = null;
 let adminLastSent = null;
@@ -196,31 +223,39 @@ async function sendAdminPosition() {
     try {
         const pos = await getPosition();
         const acc = pos.coords.accuracy;
-        if (acc > MAX_ACCURACY) { updateStatusBar(`❌ Précision ${Math.round(acc)}m`, '#ff5f57'); return; }
-        const filtered = adminFilter.process(pos.coords.latitude, pos.coords.longitude, acc);
+        
+        // IMPORTANT: on accepte jusqu'à 100m maintenant
+        const smoothed = smoothPosition(userId, pos.coords.latitude, pos.coords.longitude, acc);
+        if (!smoothed) return;
+        
+        const filtered = adminFilter.process(smoothed.lat, smoothed.lng, smoothed.accuracy);
+        
         if (adminLastSent) {
             const dist = calcDistance(adminLastSent.lat, adminLastSent.lng, filtered.lat, filtered.lng);
             if (dist < MIN_MOVE_UPDATE) {
-                const label = getAccuracyLabel(acc);
-                updateStatusBar(`📍 Stable ±${Math.round(acc)}m (${label.text})`, label.color);
+                const label = getAccuracyLabel(smoothed.accuracy);
+                updateStatusBar(`📍 Stable ±${smoothed.accuracy.toFixed(1)}m (${smoothed.samples} éch.)`, label.color);
                 return;
             }
         }
+        
         adminLastSent = filtered;
-        const label = getAccuracyLabel(acc);
-        updateStatusBar(`📍 ${filtered.lat.toFixed(6)}, ${filtered.lng.toFixed(6)} — ${label.text} ±${Math.round(acc)}m`, label.color);
+        const label = getAccuracyLabel(smoothed.accuracy);
+        updateStatusBar(`📍 ±${smoothed.accuracy.toFixed(1)}m — ${label.text} (${smoothed.samples} éch.)`, label.color);
+        
         await fetch(BACKEND_URL + '/api/position', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 user_id: userId, name: 'Admin', whatsapp: '',
                 lat: filtered.lat, lng: filtered.lng,
-                speed: pos.coords.speed || 0, accuracy: acc,
+                speed: pos.coords.speed || 0, accuracy: smoothed.accuracy,
                 heading: pos.coords.heading || 0, altitude: pos.coords.altitude || 0
             })
         });
-    } catch (e) { updateStatusBar('❌ ' + e.message, '#ff5f57'); }
-    finally { isSendingAdmin = false; }
+    } catch (e) {
+        updateStatusBar('❌ ' + e.message, '#ff5f57');
+    } finally { isSendingAdmin = false; }
 }
 
 function updateStatusBar(msg, color) {
@@ -232,6 +267,40 @@ function startAdminSharing() {
     sendAdminPosition();
     adminInterval = setInterval(sendAdminPosition, SEND_INTERVAL);
 }
+
+// ============================================================
+// BOUTON ACTUALISER CARTE
+// ============================================================
+async function forceRefresh() {
+    const btn = document.getElementById('refreshBtn');
+    if (btn) {
+        btn.style.animation = 'spin 1s linear infinite';
+    }
+    updateStatusBar('🔄 Actualisation de la carte...', '#00d4ff');
+    
+    // 1. Redemander la position GPS immédiatement
+    await sendAdminPosition();
+    
+    // 2. Rafraîchir les positions
+    await fetchPositions();
+    
+    // 3. Recentrer sur toi
+    setTimeout(() => {
+        if (markers[userId]) {
+            map.setView(markers[userId].marker.getLatLng(), 17, { animate: true });
+        }
+    }, 500);
+    
+    setTimeout(() => {
+        if (btn) btn.style.animation = '';
+        updateStatusBar('✅ Carte actualisée', '#28c840');
+    }, 1500);
+}
+
+// Ajouter l'animation spin
+const spinStyle = document.createElement('style');
+spinStyle.textContent = '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
+document.head.appendChild(spinStyle);
 
 // ============================================================
 // STOCKAGE
@@ -251,6 +320,8 @@ let colorIndex = 0;
 let currentFilter = 'all';
 let currentSort = 'age';
 let routingControl = null;
+let placeRouteControl = null;
+let targetRouteControl = null;
 
 function getColor(uid) {
     if (!markers[uid]) { colorIndex = (colorIndex + 1) % colors.length; return colors[colorIndex]; }
@@ -330,25 +401,83 @@ function showRouteTo(targetUserId) {
     updateStatusBar(`🛣️ Calcul vers ${targetName}...`, '#ffbd2e');
 }
 
-function clearRoute() {
-    if (routingControl) { map.removeControl(routingControl); routingControl = null; }
-    if (placeRouteControl) { map.removeControl(placeRouteControl); placeRouteControl = null; }
-    updateStatusBar('🗑️ Itinéraire effacé', '#ffbd2e');
+// ============================================================
+// CIBLAGE (point temporaire)
+// ============================================================
+let targetMode = false;
+let targetMarker = null;
+
+function toggleTargetMode() {
+    targetMode = !targetMode;
+    const btn = document.getElementById('targetBtn');
+    if (btn) {
+        btn.style.background = targetMode ? 'rgba(0,212,255,.3)' : '';
+        btn.style.borderColor = targetMode ? '#00d4ff' : '';
+    }
+    updateStatusBar(
+        targetMode ? '🎯 Cliquez sur la carte pour cibler un point' : '📍 Mode normal',
+        targetMode ? '#00d4ff' : '#ffbd2e'
+    );
+    document.body.style.cursor = targetMode ? 'crosshair' : '';
+}
+
+function createTargetPoint(lat, lng) {
+    if (targetMarker) map.removeLayer(targetMarker);
+    if (targetRouteControl) { map.removeControl(targetRouteControl); targetRouteControl = null; }
+    const icon = L.divIcon({
+        className: 'target-marker-wrapper',
+        html: `<div class="target-marker"><span>🎯</span></div>`,
+        iconSize: [28, 28], iconAnchor: [14, 14]
+    });
+    targetMarker = L.marker([lat, lng], { icon }).addTo(map);
+    targetMarker.bindPopup(`
+        <div class="target-popup">
+            <b>🎯 Point ciblé</b><br>
+            <span style="color:#00d4ff;font-size:11px;">${lat.toFixed(5)}, ${lng.toFixed(5)}</span><br>
+            <button onclick="routeToTarget(${lat}, ${lng})" style="margin-top:8px;padding:6px 12px;background:#00d4ff;color:#000;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🛣️ Itinéraire</button>
+            <button onclick="clearTarget()" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#ff5f57;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🗑️ Effacer</button>
+        </div>
+    `);
+    targetMarker.openPopup();
+    updateStatusBar(`🎯 Point ciblé: ${lat.toFixed(5)}, ${lng.toFixed(5)}`, '#00d4ff');
+}
+
+function routeToTarget(lat, lng) {
+    const me = markers[userId];
+    if (!me) { updateStatusBar('❌ Ta position n\'est pas détectée', '#ff5f57'); return; }
+    if (targetRouteControl) map.removeControl(targetRouteControl);
+    const mePos = me.marker.getLatLng();
+    targetRouteControl = L.Routing.control({
+        waypoints: [L.latLng(mePos.lat, mePos.lng), L.latLng(lat, lng)],
+        routeWhileDragging: false, addWaypoints: false, fitSelectedRoutes: true, showAlternatives: false,
+        lineOptions: { styles: [{ color: '#00d4ff', weight: 4, opacity: 0.9 }] },
+        createMarker: function() { return null; }, language: 'fr', show: false
+    }).addTo(map);
+    targetRouteControl.on('routesfound', function(e) {
+        const route = e.routes[0];
+        const dist = (route.summary.totalDistance / 1000).toFixed(2);
+        const time = Math.round(route.summary.totalTime / 60);
+        updateStatusBar(`🛣️ Itinéraire: ${dist} km — ${time} min`, '#00d4ff');
+    });
+    updateStatusBar('🛣️ Calcul...', '#ffbd2e');
+    map.closePopup();
+}
+
+function clearTarget() {
+    if (targetMarker) { map.removeLayer(targetMarker); targetMarker = null; }
+    if (targetRouteControl) { map.removeControl(targetRouteControl); targetRouteControl = null; }
+    updateStatusBar('🗑️ Point ciblé effacé', '#ffbd2e');
 }
 
 // ============================================================
-// SYSTÈME DE MARQUAGE DE LIEUX
+// LIEUX (permanents)
 // ============================================================
 let places = JSON.parse(localStorage.getItem(PLACES_KEY) || '[]');
 let placeMarkers = {};
-let placeRouteControl = null;
 let placeMode = false;
 
 function loadPlaces() {
-    places.forEach(place => {
-        addPlaceToMap(place.id, place.name, place.lat, place.lng, false);
-    });
-    console.log(`📌 ${places.length} lieu(x) chargé(s)`);
+    places.forEach(place => { addPlaceToMap(place.id, place.name, place.lat, place.lng, false); });
 }
 
 function addPlaceToMap(id, name, lat, lng, save = true) {
@@ -394,7 +523,6 @@ function deletePlace(id) {
     if (placeMarkers[id]) { map.removeLayer(placeMarkers[id]); delete placeMarkers[id]; }
     places = places.filter(p => p.id !== id);
     localStorage.setItem(PLACES_KEY, JSON.stringify(places));
-    if (placeRouteControl) { map.removeControl(placeRouteControl); placeRouteControl = null; }
     updateStatusBar('🗑️ Lieu supprimé', '#ff5f57');
 }
 
@@ -417,7 +545,6 @@ function routeToPlace(id) {
         const time = Math.round(route.summary.totalTime / 60);
         updateStatusBar(`🛣️ Vers ${place.name}: ${dist} km — ${time} min`, '#ff5f57');
     });
-    updateStatusBar(`🛣️ Calcul vers ${place.name}...`, '#ffbd2e');
     map.closePopup();
 }
 
@@ -435,17 +562,34 @@ function togglePlaceMode() {
     document.body.style.cursor = placeMode ? 'crosshair' : '';
 }
 
+function clearRoute() {
+    if (routingControl) { map.removeControl(routingControl); routingControl = null; }
+    if (placeRouteControl) { map.removeControl(placeRouteControl); placeRouteControl = null; }
+    if (targetRouteControl) { map.removeControl(targetRouteControl); targetRouteControl = null; }
+    updateStatusBar('🗑️ Itinéraire effacé', '#ffbd2e');
+}
+
+// Clic sur la carte
 map.on('click', function(e) {
-    if (!placeMode) return;
-    const id = 'place_' + Date.now();
-    const name = 'Lieu ' + (places.length + 1);
-    addPlaceToMap(id, name, e.latlng.lat, e.latlng.lng, true);
-    setTimeout(() => { if (placeMarkers[id]) placeMarkers[id].openPopup(); }, 100);
-    placeMode = false;
-    const btn = document.getElementById('placeBtn');
-    if (btn) { btn.style.background = ''; btn.style.borderColor = ''; }
-    document.body.style.cursor = '';
-    updateStatusBar('✅ Lieu créé ! Renommez-le', '#28c840');
+    if (targetMode) {
+        createTargetPoint(e.latlng.lat, e.latlng.lng);
+        targetMode = false;
+        const btn = document.getElementById('targetBtn');
+        if (btn) { btn.style.background = ''; btn.style.borderColor = ''; }
+        document.body.style.cursor = '';
+        return;
+    }
+    if (placeMode) {
+        const id = 'place_' + Date.now();
+        const name = 'Lieu ' + (places.length + 1);
+        addPlaceToMap(id, name, e.latlng.lat, e.latlng.lng, true);
+        setTimeout(() => { if (placeMarkers[id]) placeMarkers[id].openPopup(); }, 100);
+        placeMode = false;
+        const btn = document.getElementById('placeBtn');
+        if (btn) { btn.style.background = ''; btn.style.borderColor = ''; }
+        document.body.style.cursor = '';
+        updateStatusBar('✅ Lieu créé ! Renommez-le', '#28c840');
+    }
 });
 
 // ============================================================
@@ -668,776 +812,15 @@ startAdminSharing();
 fetchPositions();
 setInterval(fetchPositions, REFRESH_INTERVAL);
 
-console.log('%c 📍 Tracker COMPLET avec lieux ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
+// Redemander le GPS toutes les 30 sec (pour rester précis)
+setInterval(() => { sendAdminPosition(); }, 30000);
 
-// ============================================================
-// FRÉQUENCE ADAPTATIVE SELON LA VITESSE
-// ============================================================
-let currentSpeed = 0;
-let adaptiveInterval = null;
-let lastSpeedCheck = 0;
-
-function getAdaptiveInterval() {
-    // Vitesse en km/h
-    if (currentSpeed < 2) return 10000;        // Immobile → 10 sec
-    if (currentSpeed < 10) return 1000;         // Marche → 1 sec
-    if (currentSpeed < 50) return 3000;         // Vélo/moto → 3 sec
-    return 5000;                                 // Voiture → 5 sec
-}
-
-function startAdaptiveSharing() {
-    if (adaptiveInterval) clearInterval(adaptiveInterval);
-    
-    function loop() {
-        const now = Date.now();
-        const interval = getAdaptiveInterval();
-        
-        // Envoyer la position
-        sendAdminPosition();
-        
-        // Recalculer à chaque cycle
-        adaptiveInterval = setTimeout(loop, interval);
-        
-        // Log
-        if (now - lastSpeedCheck > 5000) {
-            lastSpeedCheck = now;
-            const speedKmh = currentSpeed.toFixed(1);
-            updateStatusBar(`📍 ${speedKmh} km/h → envoi toutes les ${interval/1000}s`, '#28c840');
-        }
-    }
-    
-    loop();
-}
-
-// Remplacer la fonction startAdminSharing
-window.startAdminSharing = startAdaptiveSharing;
-
-// Mettre à jour currentSpeed à chaque envoi
-const originalSendAdmin = window.sendAdminPosition || sendAdminPosition;
-window.sendAdminPosition = async function() {
-    try {
-        const pos = await new Promise((res, rej) => 
-            navigator.geolocation.getCurrentPosition(res, rej, {
-                enableHighAccuracy: true, timeout: 10000, maximumAge: 0
-            })
-        );
-        
-        // Calculer la vitesse (m/s → km/h)
-        currentSpeed = (pos.coords.speed || 0) * 3.6;
-        
-        // Si le GPS ne donne pas la vitesse, la calculer
-        if (currentSpeed === 0 && adminLastSent) {
-            const dist = calcDistance(
-                adminLastSent.lat, adminLastSent.lng,
-                pos.coords.latitude, pos.coords.longitude
-            );
-            const timeDiff = (Date.now() - (adminLastSent.time || Date.now())) / 1000;
-            if (timeDiff > 0) {
-                currentSpeed = (dist / timeDiff) * 3.6;
-            }
-        }
-        
-        // Envoyer
-        const acc = pos.coords.accuracy;
-        if (acc > MAX_ACCURACY) return;
-        
-        const filtered = adminFilter.process(pos.coords.latitude, pos.coords.longitude, acc);
-        
-        adminLastSent = {
-            lat: filtered.lat,
-            lng: filtered.lng,
-            time: Date.now()
-        };
-        
-        await fetch(BACKEND_URL + '/api/position', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                user_id: userId, name: 'Admin', whatsapp: '',
-                lat: filtered.lat, lng: filtered.lng,
-                speed: pos.coords.speed || 0,
-                accuracy: acc,
-                heading: pos.coords.heading || 0,
-                altitude: pos.coords.altitude || 0
-            })
-        });
-    } catch (e) {
-        console.warn('Erreur admin:', e.message);
-    }
-};
-
-console.log('%c ⚡ Fréquence adaptative activée', 'color:#28c840;font-weight:bold;font-size:14px');
-console.log('   0-2 km/h   → 10 sec');
-console.log('   2-10 km/h  → 1 sec (marche)');
-console.log('   10-50 km/h → 3 sec (vélo/moto)');
-console.log('   50+ km/h   → 5 sec (voiture)');
-
-// ============================================================
-// FRÉQUENCE ADAPTATIVE SELON LA VITESSE
-// ============================================================
-let currentSpeed = 0;
-let adaptiveInterval = null;
-let lastSpeedCheck = 0;
-
-function getAdaptiveInterval() {
-    // Vitesse en km/h
-    if (currentSpeed < 2) return 10000;        // Immobile → 10 sec
-    if (currentSpeed < 10) return 1000;         // Marche → 1 sec
-    if (currentSpeed < 50) return 3000;         // Vélo/moto → 3 sec
-    return 5000;                                 // Voiture → 5 sec
-}
-
-function startAdaptiveSharing() {
-    if (adaptiveInterval) clearInterval(adaptiveInterval);
-    
-    function loop() {
-        const now = Date.now();
-        const interval = getAdaptiveInterval();
-        
-        // Envoyer la position
-        sendAdminPosition();
-        
-        // Recalculer à chaque cycle
-        adaptiveInterval = setTimeout(loop, interval);
-        
-        // Log
-        if (now - lastSpeedCheck > 5000) {
-            lastSpeedCheck = now;
-            const speedKmh = currentSpeed.toFixed(1);
-            updateStatusBar(`📍 ${speedKmh} km/h → envoi toutes les ${interval/1000}s`, '#28c840');
-        }
-    }
-    
-    loop();
-}
-
-// Remplacer la fonction startAdminSharing
-window.startAdminSharing = startAdaptiveSharing;
-
-// Mettre à jour currentSpeed à chaque envoi
-const originalSendAdmin = window.sendAdminPosition || sendAdminPosition;
-window.sendAdminPosition = async function() {
-    try {
-        const pos = await new Promise((res, rej) => 
-            navigator.geolocation.getCurrentPosition(res, rej, {
-                enableHighAccuracy: true, timeout: 10000, maximumAge: 0
-            })
-        );
-        
-        // Calculer la vitesse (m/s → km/h)
-        currentSpeed = (pos.coords.speed || 0) * 3.6;
-        
-        // Si le GPS ne donne pas la vitesse, la calculer
-        if (currentSpeed === 0 && adminLastSent) {
-            const dist = calcDistance(
-                adminLastSent.lat, adminLastSent.lng,
-                pos.coords.latitude, pos.coords.longitude
-            );
-            const timeDiff = (Date.now() - (adminLastSent.time || Date.now())) / 1000;
-            if (timeDiff > 0) {
-                currentSpeed = (dist / timeDiff) * 3.6;
-            }
-        }
-        
-        // Envoyer
-        const acc = pos.coords.accuracy;
-        if (acc > MAX_ACCURACY) return;
-        
-        const filtered = adminFilter.process(pos.coords.latitude, pos.coords.longitude, acc);
-        
-        adminLastSent = {
-            lat: filtered.lat,
-            lng: filtered.lng,
-            time: Date.now()
-        };
-        
-        await fetch(BACKEND_URL + '/api/position', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                user_id: userId, name: 'Admin', whatsapp: '',
-                lat: filtered.lat, lng: filtered.lng,
-                speed: pos.coords.speed || 0,
-                accuracy: acc,
-                heading: pos.coords.heading || 0,
-                altitude: pos.coords.altitude || 0
-            })
-        });
-    } catch (e) {
-        console.warn('Erreur admin:', e.message);
-    }
-};
-
-console.log('%c ⚡ Fréquence adaptative activée', 'color:#28c840;font-weight:bold;font-size:14px');
-console.log('   0-2 km/h   → 10 sec');
-console.log('   2-10 km/h  → 1 sec (marche)');
-console.log('   10-50 km/h → 3 sec (vélo/moto)');
-console.log('   50+ km/h   → 5 sec (voiture)');
-
-// ============================================================
-// PRÉCISION MAXIMALE (limite physique du GPS civil)
-// ============================================================
-const PRECISION_MAX = {
-    MIN_ACCURACY: 8,        // Rejeter si > 8m
-    SAMPLES: 5,              // Moyenne sur 5 positions
-    TIMEOUT: 30000,          // 30 secondes max
-    MAX_AGE: 0,              // Toujours frais
-    WAIT_GOOD: true          // Attendre une bonne précision
-};
-
-// Buffer de positions pour la moyenne
-const precisionBuffers = {};
-
-function getPrecisionPosition() {
-    return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) { reject(new Error('Non supportée')); return; }
-        
-        // Tentative 1 : haute précision
-        navigator.geolocation.getCurrentPosition(
-            (pos) => resolve(pos),
-            (err) => {
-                // Tentative 2 : précision normale
-                navigator.geolocation.getCurrentPosition(
-                    (pos) => resolve(pos),
-                    (err2) => reject(err2),
-                    { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
-                );
-            },
-            {
-                enableHighAccuracy: true,
-                timeout: PRECISION_MAX.TIMEOUT,
-                maximumAge: PRECISION_MAX.MAX_AGE
-            }
-        );
-    });
-}
-
-function smoothPosition(uid, lat, lng, accuracy) {
-    // Rejeter les positions trop imprécises
-    if (accuracy > PRECISION_MAX.MIN_ACCURACY) {
-        return null;
-    }
-    
-    // Initialiser le buffer
-    if (!precisionBuffers[uid]) {
-        precisionBuffers[uid] = [];
-    }
-    
-    const buffer = precisionBuffers[uid];
-    buffer.push({ lat, lng, accuracy });
-    
-    // Garder les N dernières
-    if (buffer.length > PRECISION_MAX.SAMPLES) {
-        buffer.shift();
-    }
-    
-    // Moyenne pondérée par la précision
-    let totalWeight = 0;
-    let weightedLat = 0;
-    let weightedLng = 0;
-    let totalAcc = 0;
-    
-    for (const sample of buffer) {
-        // Plus la précision est bonne, plus le poids est élevé
-        const weight = 1 / (sample.accuracy * sample.accuracy);
-        totalWeight += weight;
-        weightedLat += sample.lat * weight;
-        weightedLng += sample.lng * weight;
-        totalAcc += sample.accuracy;
-    }
-    
-    if (totalWeight === 0) return null;
-    
-    return {
-        lat: weightedLat / totalWeight,
-        lng: weightedLng / totalWeight,
-        accuracy: totalAcc / buffer.length,
-        samples: buffer.length
-    };
-}
-
-// Remplacer la fonction sendAdminPosition
-window.sendAdminPosition = async function() {
-    if (isSendingAdmin) return;
-    isSendingAdmin = true;
-    try {
-        const pos = await getPrecisionPosition();
-        const acc = pos.coords.accuracy;
-        
-        // Filtrer avec la moyenne pondérée
-        const smoothed = smoothPosition(userId, pos.coords.latitude, pos.coords.longitude, acc);
-        
-        if (!smoothed) {
-            updateStatusBar(`⏳ Recherche précision... (±${Math.round(acc)}m)`, '#ffbd2e');
-            return;
-        }
-        
-        // Kalman sur la position moyennée
-        const filtered = adminFilter.process(smoothed.lat, smoothed.lng, smoothed.accuracy);
-        
-        // Vérifier si bougé
-        if (adminLastSent) {
-            const dist = calcDistance(adminLastSent.lat, adminLastSent.lng, filtered.lat, filtered.lng);
-            if (dist < 1) {
-                const label = getAccuracyLabel(smoothed.accuracy);
-                updateStatusBar(`📍 Stable ±${smoothed.accuracy.toFixed(1)}m (${smoothed.samples} éch.)`, label.color);
-                return;
-            }
-        }
-        
-        adminLastSent = filtered;
-        const label = getAccuracyLabel(smoothed.accuracy);
-        updateStatusBar(`📍 ±${smoothed.accuracy.toFixed(1)}m — ${label.text} (${smoothed.samples} éch.)`, label.color);
-        
-        await fetch(BACKEND_URL + '/api/position', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                user_id: userId, name: 'Admin', whatsapp: '',
-                lat: filtered.lat, lng: filtered.lng,
-                speed: pos.coords.speed || 0,
-                accuracy: smoothed.accuracy,
-                heading: pos.coords.heading || 0,
-                altitude: pos.coords.altitude || 0
-            })
-        });
-    } catch (e) {
-        updateStatusBar('❌ ' + e.message, '#ff5f57');
-    } finally {
-        isSendingAdmin = false;
-    }
-};
-
-console.log('%c 🎯 PRÉCISION MAXIMALE activée', 'color:#28c840;font-weight:bold;font-size:14px');
-console.log('   Précision min: 8m');
-console.log('   Moyenne sur 5 positions');
-console.log('   Timeout: 30 secondes');
-console.log('   Résultat attendu: ±3-5m');
-
-// ============================================================
-// PRÉCISION MAXIMALE (limite physique du GPS civil)
-// ============================================================
-const PRECISION_MAX = {
-    MIN_ACCURACY: 8,        // Rejeter si > 8m
-    SAMPLES: 5,              // Moyenne sur 5 positions
-    TIMEOUT: 30000,          // 30 secondes max
-    MAX_AGE: 0,              // Toujours frais
-    WAIT_GOOD: true          // Attendre une bonne précision
-};
-
-// Buffer de positions pour la moyenne
-const precisionBuffers = {};
-
-function getPrecisionPosition() {
-    return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) { reject(new Error('Non supportée')); return; }
-        
-        // Tentative 1 : haute précision
-        navigator.geolocation.getCurrentPosition(
-            (pos) => resolve(pos),
-            (err) => {
-                // Tentative 2 : précision normale
-                navigator.geolocation.getCurrentPosition(
-                    (pos) => resolve(pos),
-                    (err2) => reject(err2),
-                    { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
-                );
-            },
-            {
-                enableHighAccuracy: true,
-                timeout: PRECISION_MAX.TIMEOUT,
-                maximumAge: PRECISION_MAX.MAX_AGE
-            }
-        );
-    });
-}
-
-function smoothPosition(uid, lat, lng, accuracy) {
-    // Rejeter les positions trop imprécises
-    if (accuracy > PRECISION_MAX.MIN_ACCURACY) {
-        return null;
-    }
-    
-    // Initialiser le buffer
-    if (!precisionBuffers[uid]) {
-        precisionBuffers[uid] = [];
-    }
-    
-    const buffer = precisionBuffers[uid];
-    buffer.push({ lat, lng, accuracy });
-    
-    // Garder les N dernières
-    if (buffer.length > PRECISION_MAX.SAMPLES) {
-        buffer.shift();
-    }
-    
-    // Moyenne pondérée par la précision
-    let totalWeight = 0;
-    let weightedLat = 0;
-    let weightedLng = 0;
-    let totalAcc = 0;
-    
-    for (const sample of buffer) {
-        // Plus la précision est bonne, plus le poids est élevé
-        const weight = 1 / (sample.accuracy * sample.accuracy);
-        totalWeight += weight;
-        weightedLat += sample.lat * weight;
-        weightedLng += sample.lng * weight;
-        totalAcc += sample.accuracy;
-    }
-    
-    if (totalWeight === 0) return null;
-    
-    return {
-        lat: weightedLat / totalWeight,
-        lng: weightedLng / totalWeight,
-        accuracy: totalAcc / buffer.length,
-        samples: buffer.length
-    };
-}
-
-// Remplacer la fonction sendAdminPosition
-window.sendAdminPosition = async function() {
-    if (isSendingAdmin) return;
-    isSendingAdmin = true;
-    try {
-        const pos = await getPrecisionPosition();
-        const acc = pos.coords.accuracy;
-        
-        // Filtrer avec la moyenne pondérée
-        const smoothed = smoothPosition(userId, pos.coords.latitude, pos.coords.longitude, acc);
-        
-        if (!smoothed) {
-            updateStatusBar(`⏳ Recherche précision... (±${Math.round(acc)}m)`, '#ffbd2e');
-            return;
-        }
-        
-        // Kalman sur la position moyennée
-        const filtered = adminFilter.process(smoothed.lat, smoothed.lng, smoothed.accuracy);
-        
-        // Vérifier si bougé
-        if (adminLastSent) {
-            const dist = calcDistance(adminLastSent.lat, adminLastSent.lng, filtered.lat, filtered.lng);
-            if (dist < 1) {
-                const label = getAccuracyLabel(smoothed.accuracy);
-                updateStatusBar(`📍 Stable ±${smoothed.accuracy.toFixed(1)}m (${smoothed.samples} éch.)`, label.color);
-                return;
-            }
-        }
-        
-        adminLastSent = filtered;
-        const label = getAccuracyLabel(smoothed.accuracy);
-        updateStatusBar(`📍 ±${smoothed.accuracy.toFixed(1)}m — ${label.text} (${smoothed.samples} éch.)`, label.color);
-        
-        await fetch(BACKEND_URL + '/api/position', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                user_id: userId, name: 'Admin', whatsapp: '',
-                lat: filtered.lat, lng: filtered.lng,
-                speed: pos.coords.speed || 0,
-                accuracy: smoothed.accuracy,
-                heading: pos.coords.heading || 0,
-                altitude: pos.coords.altitude || 0
-            })
-        });
-    } catch (e) {
-        updateStatusBar('❌ ' + e.message, '#ff5f57');
-    } finally {
-        isSendingAdmin = false;
-    }
-};
-
-console.log('%c 🎯 PRÉCISION MAXIMALE activée', 'color:#28c840;font-weight:bold;font-size:14px');
-console.log('   Précision min: 8m');
-console.log('   Moyenne sur 5 positions');
-console.log('   Timeout: 30 secondes');
-console.log('   Résultat attendu: ±3-5m');
-
-// ============================================================
-// FRÉQUENCE ADAPTATIVE SELON LA VITESSE
-// Plus tu vas vite, moins on envoie souvent
-// ============================================================
-let currentSpeedKmh = 0;
-
-function getAdaptiveInterval() {
-    if (currentSpeedKmh < 2) return 10000;       // Immobile → 10 sec
-    if (currentSpeedKmh < 10) return 1000;        // Marche → 1 sec
-    if (currentSpeedKmh < 50) return 3000;        // Vélo/Moto → 3 sec
-    return 5000;                                   // Voiture → 5 sec
-}
-
-// Modifier la fonction sendAdminPosition pour tracker la vitesse
-const originalSendAdmin2 = window.sendAdminPosition || sendAdminPosition;
-
-window.sendAdminPosition = async function() {
-    try {
-        const pos = await new Promise((res, rej) => 
-            navigator.geolocation.getCurrentPosition(res, rej, {
-                enableHighAccuracy: true, timeout: 30000, maximumAge: 0
-            })
-        );
-        
-        // Calculer la vitesse
-        currentSpeedKmh = (pos.coords.speed || 0) * 3.6;
-        
-        // Si le GPS ne donne pas la vitesse, la calculer manuellement
-        if (currentSpeedKmh === 0 && adminLastSent) {
-            const dist = calcDistance(
-                adminLastSent.lat, adminLastSent.lng,
-                pos.coords.latitude, pos.coords.longitude
-            );
-            const timeDiff = (Date.now() - (adminLastSent.time || Date.now())) / 1000;
-            if (timeDiff > 0) {
-                currentSpeedKmh = (dist / timeDiff) * 3.6;
-            }
-        }
-        
-        // Filtrer
-        const acc = pos.coords.accuracy;
-        if (acc > MAX_ACCURACY) return;
-        
-        const filtered = adminFilter.process(pos.coords.latitude, pos.coords.longitude, acc);
-        
-        // Vérifier si bougé
-        if (adminLastSent) {
-            const dist = calcDistance(adminLastSent.lat, adminLastSent.lng, filtered.lat, filtered.lng);
-            if (dist < MIN_MOVE_UPDATE) {
-                const interval = getAdaptiveInterval();
-                updateStatusBar(`📍 ${currentSpeedKmh.toFixed(1)} km/h — Stable (envoi ${interval/1000}s)`, '#ffbd2e');
-                return;
-            }
-        }
-        
-        adminLastSent = {
-            lat: filtered.lat,
-            lng: filtered.lng,
-            time: Date.now()
-        };
-        
-        const interval = getAdaptiveInterval();
-        updateStatusBar(`📍 ${currentSpeedKmh.toFixed(1)} km/h → envoi ${interval/1000}s`, '#28c840');
-        
-        await fetch(BACKEND_URL + '/api/position', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                user_id: userId, name: 'Admin', whatsapp: '',
-                lat: filtered.lat, lng: filtered.lng,
-                speed: pos.coords.speed || 0,
-                accuracy: acc,
-                heading: pos.coords.heading || 0,
-                altitude: pos.coords.altitude || 0
-            })
-        });
-    } catch (e) {
-        updateStatusBar('❌ ' + e.message, '#ff5f57');
-    }
-};
-
-// Boucle adaptative
-let adaptiveLoopTimer = null;
-function startAdaptiveLoop() {
-    if (adaptiveLoopTimer) clearTimeout(adaptiveLoopTimer);
-    
-    async function loop() {
-        await sendAdminPosition();
-        const interval = getAdaptiveInterval();
-        adaptiveLoopTimer = setTimeout(loop, interval);
-    }
-    
-    loop();
-}
-
-// Remplacer le démarrage
-window.startAdminSharing = startAdaptiveLoop;
-
-console.log('%c ⚡ VITESSE ADAPTATIVE activée', 'color:#28c840;font-weight:bold;font-size:14px');
-console.log('   Immobile  → 10 sec');
-console.log('   Marche    → 1 sec');
-console.log('   Vélo/Moto → 3 sec');
-console.log('   Voiture   → 5 sec');
-
-// ============================================================
-// AUTO-REFRESH INTELLIGENT
-// 1. Refresh des positions toutes les 2 sec (fluide)
-// 2. Redemander le GPS toutes les 30 sec (précision)
-// 3. Recharger la page toutes les 10 min (reset complet)
-// ============================================================
-
-let autoRefreshCount = 0;
-
-// 1. Refresh des positions (déjà fait par fetchPositions)
-// On vérifie juste que c'est bien actif
-if (typeof fetchPositions !== 'undefined') {
-    console.log('✅ Refresh positions actif (2 sec)');
-}
-
-// 2. Redemander le GPS toutes les 30 secondes
-setInterval(() => {
-    if (typeof sendAdminPosition === 'function') {
-        sendAdminPosition();
-        console.log('📍 GPS redemandé (30 sec)');
-    }
-}, 30000);
-
-// 3. Recharger la page toutes les 10 minutes (600000 ms)
-// SEULEMENT si l'onglet est visible
-setInterval(() => {
-    if (document.visibilityState === 'visible') {
-        console.log('🔄 Rechargement complet de la page...');
-        location.reload();
-    }
-}, 600000); // 10 minutes
-
-// 4. Détecter quand l'utilisateur revient sur l'onglet
+// Refresh auto quand on revient sur l'onglet
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-        console.log('👁️ Onglet revenu au premier plan → refresh');
-        // Redemander la position immédiatement
-        if (typeof sendAdminPosition === 'function') {
-            sendAdminPosition();
-        }
-        // Refresh des positions
-        if (typeof fetchPositions === 'function') {
-            fetchPositions();
-        }
+        sendAdminPosition();
+        fetchPositions();
     }
 });
 
-console.log('%c 🔄 AUTO-REFRESH INTELLIGENT activé', 'color:#28c840;font-weight:bold;font-size:14px');
-console.log('   Positions:    2 sec');
-console.log('   GPS:         30 sec');
-console.log('   Page:        10 min');
-console.log('   Focus:       instantané');
-
-// ============================================================
-// SYSTÈME DE CIBLAGE (point temporaire)
-// ============================================================
-let targetMode = false;
-let targetMarker = null;
-let targetRouteControl = null;
-
-function toggleTargetMode() {
-    targetMode = !targetMode;
-    const btn = document.getElementById('targetBtn');
-    if (btn) {
-        btn.style.background = targetMode ? 'rgba(0,212,255,.3)' : '';
-        btn.style.borderColor = targetMode ? '#00d4ff' : '';
-    }
-    updateStatusBar(
-        targetMode ? '🎯 Cliquez sur la carte pour cibler un point' : '📍 Mode normal',
-        targetMode ? '#00d4ff' : '#ffbd2e'
-    );
-    document.body.style.cursor = targetMode ? 'crosshair' : '';
-}
-
-// Fonction pour créer un point cible
-function createTargetPoint(lat, lng) {
-    // Supprimer l'ancien point cible
-    if (targetMarker) {
-        map.removeLayer(targetMarker);
-    }
-    if (targetRouteControl) {
-        map.removeControl(targetRouteControl);
-        targetRouteControl = null;
-    }
-    
-    // Créer l'icône du point cible
-    const icon = L.divIcon({
-        className: 'target-marker-wrapper',
-        html: `<div class="target-marker"><span>🎯</span></div>`,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14]
-    });
-    
-    // Créer le marqueur
-    targetMarker = L.marker([lat, lng], { icon }).addTo(map);
-    
-    // Popup avec bouton itinéraire
-    const popupContent = `
-        <div class="target-popup">
-            <b>🎯 Point ciblé</b><br>
-            <span style="color:#00d4ff;font-size:11px;">${lat.toFixed(5)}, ${lng.toFixed(5)}</span><br>
-            <button onclick="routeToTarget(${lat}, ${lng})" style="margin-top:8px;padding:6px 12px;background:#00d4ff;color:#000;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🛣️ Itinéraire</button>
-            <button onclick="clearTarget()" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#ff5f57;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🗑️ Effacer</button>
-        </div>
-    `;
-    
-    targetMarker.bindPopup(popupContent);
-    targetMarker.openPopup();
-    
-    updateStatusBar(`🎯 Point ciblé: ${lat.toFixed(5)}, ${lng.toFixed(5)}`, '#00d4ff');
-}
-
-// Calculer l'itinéraire vers le point ciblé
-function routeToTarget(lat, lng) {
-    const me = markers[userId];
-    if (!me) {
-        updateStatusBar('❌ Ta position n\'est pas détectée', '#ff5f57');
-        return;
-    }
-    
-    if (targetRouteControl) {
-        map.removeControl(targetRouteControl);
-    }
-    
-    const mePos = me.marker.getLatLng();
-    
-    targetRouteControl = L.Routing.control({
-        waypoints: [
-            L.latLng(mePos.lat, mePos.lng),
-            L.latLng(lat, lng)
-        ],
-        routeWhileDragging: false,
-        addWaypoints: false,
-        fitSelectedRoutes: true,
-        showAlternatives: false,
-        lineOptions: {
-            styles: [{ color: '#00d4ff', weight: 4, opacity: 0.9 }]
-        },
-        createMarker: function() { return null; },
-        language: 'fr',
-        show: false
-    }).addTo(map);
-    
-    targetRouteControl.on('routesfound', function(e) {
-        const route = e.routes[0];
-        const dist = (route.summary.totalDistance / 1000).toFixed(2);
-        const time = Math.round(route.summary.totalTime / 60);
-        updateStatusBar(`🛣️ Itinéraire: ${dist} km — ${time} min`, '#00d4ff');
-    });
-    
-    updateStatusBar('🛣️ Calcul de l\'itinéraire...', '#ffbd2e');
-    map.closePopup();
-}
-
-// Effacer le point ciblé
-function clearTarget() {
-    if (targetMarker) {
-        map.removeLayer(targetMarker);
-        targetMarker = null;
-    }
-    if (targetRouteControl) {
-        map.removeControl(targetRouteControl);
-        targetRouteControl = null;
-    }
-    updateStatusBar('🗑️ Point ciblé effacé', '#ffbd2e');
-}
-
-// Clic sur la carte en mode ciblage
-map.on('click', function(e) {
-    if (!targetMode) return;
-    
-    createTargetPoint(e.latlng.lat, e.latlng.lng);
-    
-    targetMode = false;
-    const btn = document.getElementById('targetBtn');
-    if (btn) {
-        btn.style.background = '';
-        btn.style.borderColor = '';
-    }
-    document.body.style.cursor = '';
-});
-
-console.log('%c 🎯 Système de ciblage activé ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
+console.log('%c 📍 Tracker COMPLET ULTRA PRÉCISION ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
