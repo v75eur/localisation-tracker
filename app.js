@@ -503,3 +503,8 @@ function toggleSidebarMobile() {
     const s = document.querySelector('.sidebar');
     if (s) s.classList.toggle('open');
 }
+
+function toggleSidebarMobile() {
+    const s = document.querySelector('.sidebar');
+    if (s) s.classList.toggle('open');
+}
