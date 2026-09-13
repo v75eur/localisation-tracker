@@ -68,3 +68,59 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .plane-marker div{font-size:18px;line-height:20px;text-align:center;transition:transform 0.3s ease}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 @media(max-width:768px){.sidebar{top:auto;bottom:1rem;right:1rem;left:1rem;width:auto;max-height:40vh}.map-buttons{top:70px;left:.5rem}.status-bar{bottom:auto;top:70px;right:.5rem;left:auto}}
+
+/* ═══════════════════════════════════════════
+   CORRECTIF - Éviter le conflit sidebar/boutons
+   ═══════════════════════════════════════════ */
+
+/* Sur mobile, le panneau ne doit PAS recouvrir les boutons */
+@media(max-width:768px){
+    /* Boutons plus compacts */
+    .map-buttons{
+        top:60px;
+        left:.3rem;
+        gap:.3rem;
+        max-height:calc(100vh - 70px);
+    }
+    .map-buttons button{
+        width:34px;
+        height:34px;
+        font-size:.85rem;
+    }
+    
+    /* Panneau en bas, mais avec limite */
+    .sidebar{
+        top:auto;
+        bottom:.3rem;
+        right:.3rem;
+        left:.3rem;
+        width:auto;
+        max-height:35vh;
+    }
+    .sidebar.collapsed{
+        width:auto;
+        max-height:50px;
+    }
+    
+    /* Barre de statut plus haute */
+    .status-bar{
+        bottom:auto;
+        top:55px;
+        right:.3rem;
+        left:auto;
+        font-size:.6rem;
+        max-width:200px;
+    }
+}
+
+/* Sur très petit écran, réduire encore */
+@media(max-width:480px){
+    .map-buttons button{
+        width:30px;
+        height:30px;
+        font-size:.75rem;
+    }
+    .sidebar{
+        max-height:30vh;
+    }
+}
