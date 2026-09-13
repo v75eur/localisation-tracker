@@ -1,5 +1,5 @@
 // ============================================================
-// TRACKER GPS - Version complète finale
+// TRACKER GPS - Version complète avec lieux
 // ============================================================
 
 const BACKEND_URL = 'https://localisation-backend-sm3t.onrender.com';
@@ -7,10 +7,11 @@ const REFRESH_INTERVAL = 1000;
 const SEND_INTERVAL = 1000;
 const TRAIL_MAX_POINTS = 150;
 const MAX_ZOOM = 21;
-const MAX_ACCURACY = 50;
-const TRAIL_MIN_MOVE = 2;
-const MIN_MOVE_UPDATE = 1;
+const MAX_ACCURACY = 30;
+const TRAIL_MIN_MOVE = 8;
+const MIN_MOVE_UPDATE = 2;
 const GEOCODE_CACHE = {};
+const PLACES_KEY = 'tracker_places';
 
 fetch(BACKEND_URL + '/api/ping').catch(() => {});
 
@@ -41,23 +42,16 @@ function toggleSatellite() {
     }
 }
 L.control.zoom({ position: 'bottomright' }).addTo(map);
-
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 // ============================================================
-// FILTRE KALMAN
+// KALMAN
 // ============================================================
 class KalmanFilter {
     constructor() { this.reset(); }
     reset() { this.lat = null; this.lng = null; this.variance = -1; }
     process(lat, lng, accuracy) {
-        if (this.lat === null) {
-            this.lat = lat; this.lng = lng;
-            this.variance = accuracy * accuracy;
-            return { lat, lng };
-        }
+        if (this.lat === null) { this.lat = lat; this.lng = lng; this.variance = accuracy * accuracy; return { lat, lng }; }
         const variance = this.variance + 0.01;
         const gain = variance / (variance + accuracy * accuracy);
         this.lat = this.lat + gain * (lat - this.lat);
@@ -96,9 +90,7 @@ if (!userId) {
 // ============================================================
 let wakeLock = null;
 async function requestWakeLock() {
-    try {
-        if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
-    } catch (e) {}
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
 }
 window.addEventListener('load', requestWakeLock);
 document.addEventListener('visibilitychange', async () => {
@@ -173,14 +165,11 @@ function playBeep() {
         if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const osc = audioContext.createOscillator();
         const gain = audioContext.createGain();
-        osc.connect(gain);
-        gain.connect(audioContext.destination);
-        osc.frequency.value = 800;
-        osc.type = 'sine';
+        osc.connect(gain); gain.connect(audioContext.destination);
+        osc.frequency.value = 800; osc.type = 'sine';
         gain.gain.setValueAtTime(0.1, audioContext.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
-        osc.start();
-        osc.stop(audioContext.currentTime + 0.2);
+        osc.start(); osc.stop(audioContext.currentTime + 0.2);
     } catch (e) {}
 }
 
@@ -207,10 +196,7 @@ async function sendAdminPosition() {
     try {
         const pos = await getPosition();
         const acc = pos.coords.accuracy;
-        if (acc > MAX_ACCURACY) {
-            updateStatusBar(`❌ Précision ${Math.round(acc)}m`, '#ff5f57');
-            return;
-        }
+        if (acc > MAX_ACCURACY) { updateStatusBar(`❌ Précision ${Math.round(acc)}m`, '#ff5f57'); return; }
         const filtered = adminFilter.process(pos.coords.latitude, pos.coords.longitude, acc);
         if (adminLastSent) {
             const dist = calcDistance(adminLastSent.lat, adminLastSent.lng, filtered.lat, filtered.lng);
@@ -233,16 +219,14 @@ async function sendAdminPosition() {
                 heading: pos.coords.heading || 0, altitude: pos.coords.altitude || 0
             })
         });
-    } catch (e) {
-        updateStatusBar('❌ ' + e.message, '#ff5f57');
-    } finally { isSendingAdmin = false; }
+    } catch (e) { updateStatusBar('❌ ' + e.message, '#ff5f57'); }
+    finally { isSendingAdmin = false; }
 }
 
 function updateStatusBar(msg, color) {
     const el = document.getElementById('statusBar');
     if (el) { el.textContent = msg; el.style.color = color || '#ffbd2e'; }
 }
-
 function startAdminSharing() {
     if (adminInterval) return;
     sendAdminPosition();
@@ -269,10 +253,7 @@ let currentSort = 'age';
 let routingControl = null;
 
 function getColor(uid) {
-    if (!markers[uid]) {
-        colorIndex = (colorIndex + 1) % colors.length;
-        return colors[colorIndex];
-    }
+    if (!markers[uid]) { colorIndex = (colorIndex + 1) % colors.length; return colors[colorIndex]; }
     return markers[uid].color;
 }
 
@@ -283,10 +264,7 @@ function createIcon(color, name, bearing, isMe) {
     const arrow = bearing !== null ? getArrow(bearing) : '';
     return L.divIcon({
         className: 'custom-marker',
-        html: `<div class="marker-direction">${arrow}</div>
-               <div class="marker-pin ${isMe ? 'me' : ''}" style="background:${color};">
-                   <span>${name.charAt(0).toUpperCase()}</span>
-               </div>`,
+        html: `<div class="marker-direction">${arrow}</div><div class="marker-pin ${isMe ? 'me' : ''}" style="background:${color};"><span>${name.charAt(0).toUpperCase()}</span></div>`,
         iconSize: [32, 42], iconAnchor: [16, 32]
     });
 }
@@ -327,7 +305,7 @@ function callWhatsAppDirect(uid) {
 }
 
 // ============================================================
-// ITINÉRAIRE OSRM
+// ITINÉRAIRE VERS UTILISATEUR
 // ============================================================
 function showRouteTo(targetUserId) {
     const me = markers[userId];
@@ -341,8 +319,7 @@ function showRouteTo(targetUserId) {
         waypoints: [L.latLng(mePos.lat, mePos.lng), L.latLng(targetPos.lat, targetPos.lng)],
         routeWhileDragging: false, addWaypoints: false, fitSelectedRoutes: true, showAlternatives: false,
         lineOptions: { styles: [{ color: '#ffd700', weight: 4, opacity: 0.8 }] },
-        createMarker: function() { return null; },
-        language: 'fr', show: false
+        createMarker: function() { return null; }, language: 'fr', show: false
     }).addTo(map);
     routingControl.on('routesfound', function(e) {
         const route = e.routes[0];
@@ -354,28 +331,134 @@ function showRouteTo(targetUserId) {
 }
 
 function clearRoute() {
-    if (routingControl) {
-        map.removeControl(routingControl);
-        routingControl = null;
-        updateStatusBar('🗑️ Itinéraire effacé', '#ffbd2e');
+    if (routingControl) { map.removeControl(routingControl); routingControl = null; }
+    if (placeRouteControl) { map.removeControl(placeRouteControl); placeRouteControl = null; }
+    updateStatusBar('🗑️ Itinéraire effacé', '#ffbd2e');
+}
+
+// ============================================================
+// SYSTÈME DE MARQUAGE DE LIEUX
+// ============================================================
+let places = JSON.parse(localStorage.getItem(PLACES_KEY) || '[]');
+let placeMarkers = {};
+let placeRouteControl = null;
+let placeMode = false;
+
+function loadPlaces() {
+    places.forEach(place => {
+        addPlaceToMap(place.id, place.name, place.lat, place.lng, false);
+    });
+    console.log(`📌 ${places.length} lieu(x) chargé(s)`);
+}
+
+function addPlaceToMap(id, name, lat, lng, save = true) {
+    if (placeMarkers[id]) map.removeLayer(placeMarkers[id]);
+    const icon = L.divIcon({
+        className: 'place-marker-wrapper',
+        html: `<div class="place-marker"><span>📌</span></div>`,
+        iconSize: [24, 24], iconAnchor: [12, 24]
+    });
+    const marker = L.marker([lat, lng], { icon }).addTo(map);
+    marker.bindPopup(`
+        <div class="place-popup">
+            <input type="text" id="place-name-${id}" value="${name}" placeholder="Nom du lieu">
+            <button class="btn-save" onclick="savePlace('${id}')">💾 Sauver</button>
+            <button class="btn-route" onclick="routeToPlace('${id}')">🛣️ Itinéraire</button>
+            <button class="btn-delete" onclick="deletePlace('${id}')">🗑️</button>
+        </div>
+    `);
+    placeMarkers[id] = marker;
+    if (save) {
+        const existing = places.findIndex(p => p.id === id);
+        if (existing === -1) places.push({ id, name, lat, lng });
+        else places[existing] = { id, name, lat, lng };
+        localStorage.setItem(PLACES_KEY, JSON.stringify(places));
     }
 }
+
+function savePlace(id) {
+    const input = document.getElementById(`place-name-${id}`);
+    if (!input) return;
+    const newName = input.value.trim() || 'Lieu';
+    const place = places.find(p => p.id === id);
+    if (place) {
+        place.name = newName;
+        localStorage.setItem(PLACES_KEY, JSON.stringify(places));
+        updateStatusBar(`💾 Lieu sauvegardé: ${newName}`, '#28c840');
+        map.closePopup();
+    }
+}
+
+function deletePlace(id) {
+    if (!confirm('Supprimer ce lieu ?')) return;
+    if (placeMarkers[id]) { map.removeLayer(placeMarkers[id]); delete placeMarkers[id]; }
+    places = places.filter(p => p.id !== id);
+    localStorage.setItem(PLACES_KEY, JSON.stringify(places));
+    if (placeRouteControl) { map.removeControl(placeRouteControl); placeRouteControl = null; }
+    updateStatusBar('🗑️ Lieu supprimé', '#ff5f57');
+}
+
+function routeToPlace(id) {
+    const place = places.find(p => p.id === id);
+    if (!place) return;
+    const me = markers[userId];
+    if (!me) { updateStatusBar('❌ Ta position n\'est pas détectée', '#ff5f57'); return; }
+    if (placeRouteControl) map.removeControl(placeRouteControl);
+    const mePos = me.marker.getLatLng();
+    placeRouteControl = L.Routing.control({
+        waypoints: [L.latLng(mePos.lat, mePos.lng), L.latLng(place.lat, place.lng)],
+        routeWhileDragging: false, addWaypoints: false, fitSelectedRoutes: true, showAlternatives: false,
+        lineOptions: { styles: [{ color: '#ff5f57', weight: 4, opacity: 0.8 }] },
+        createMarker: function() { return null; }, language: 'fr', show: false
+    }).addTo(map);
+    placeRouteControl.on('routesfound', function(e) {
+        const route = e.routes[0];
+        const dist = (route.summary.totalDistance / 1000).toFixed(2);
+        const time = Math.round(route.summary.totalTime / 60);
+        updateStatusBar(`🛣️ Vers ${place.name}: ${dist} km — ${time} min`, '#ff5f57');
+    });
+    updateStatusBar(`🛣️ Calcul vers ${place.name}...`, '#ffbd2e');
+    map.closePopup();
+}
+
+function togglePlaceMode() {
+    placeMode = !placeMode;
+    const btn = document.getElementById('placeBtn');
+    if (btn) {
+        btn.style.background = placeMode ? 'rgba(255,95,87,.3)' : '';
+        btn.style.borderColor = placeMode ? '#ff5f57' : '';
+    }
+    updateStatusBar(
+        placeMode ? '📌 Cliquez sur la carte pour marquer un lieu' : '📍 Mode normal',
+        placeMode ? '#ff5f57' : '#ffbd2e'
+    );
+    document.body.style.cursor = placeMode ? 'crosshair' : '';
+}
+
+map.on('click', function(e) {
+    if (!placeMode) return;
+    const id = 'place_' + Date.now();
+    const name = 'Lieu ' + (places.length + 1);
+    addPlaceToMap(id, name, e.latlng.lat, e.latlng.lng, true);
+    setTimeout(() => { if (placeMarkers[id]) placeMarkers[id].openPopup(); }, 100);
+    placeMode = false;
+    const btn = document.getElementById('placeBtn');
+    if (btn) { btn.style.background = ''; btn.style.borderColor = ''; }
+    document.body.style.cursor = '';
+    updateStatusBar('✅ Lieu créé ! Renommez-le', '#28c840');
+});
 
 // ============================================================
 // FILTRES ET TRI
 // ============================================================
 function setFilter(filter) {
     currentFilter = filter;
-    document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.filter === filter);
-    });
+    document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.filter === filter));
     fetchPositions();
 }
 function setSort(sort) {
     currentSort = sort;
-    document.querySelectorAll('.sort-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.sort === sort);
-    });
+    document.querySelectorAll('.sort-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.sort === sort));
     fetchPositions();
 }
 function applyFilterAndSort(positions) {
@@ -438,10 +521,7 @@ function updateUsersList(positions) {
             return `<div class="user-item ${isMe ? 'me' : ''}" onclick="selectUser('${p.user_id}')">
                 <div class="avatar" style="background:${color}">${p.name.charAt(0).toUpperCase()}</div>
                 <div class="info">
-                    <div class="name">
-                        ${arrow} ${p.name} ${isMe ? '⭐' : ''}
-                        <span class="status-badge status-${status}">${status === 'mobile' ? '🚶' : '⏸️'}</span>
-                    </div>
+                    <div class="name">${arrow} ${p.name} ${isMe ? '⭐' : ''}<span class="status-badge status-${status}">${status === 'mobile' ? '🚶' : '⏸️'}</span></div>
                     <div class="address">📍 ${addr}</div>
                     ${wa ? `<div class="whatsapp-line">📱 ${wa}</div>` : ''}
                     <div class="coords">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</div>
@@ -457,9 +537,7 @@ function updateUsersList(positions) {
     }
     list.innerHTML = html;
     filtered.forEach(p => {
-        if (!addresses[p.user_id]) {
-            getAddress(p.lat, p.lng).then(a => { if (a) addresses[p.user_id] = a; });
-        }
+        if (!addresses[p.user_id]) getAddress(p.lat, p.lng).then(a => { if (a) addresses[p.user_id] = a; });
     });
 }
 
@@ -473,15 +551,10 @@ function updateMap(positions) {
         if (p.whatsapp) whatsappNumbers[p.user_id] = p.whatsapp;
         if (!knownUsers.has(p.user_id)) {
             knownUsers.add(p.user_id);
-            if (p.user_id !== userId) {
-                playBeep();
-                updateStatusBar(`🔔 Nouvel utilisateur: ${p.name}`, '#28c840');
-            }
+            if (p.user_id !== userId) { playBeep(); updateStatusBar(`🔔 Nouvel utilisateur: ${p.name}`, '#28c840'); }
         }
         const speedKmh = (p.speed || 0) * 3.6;
-        if (!maxSpeeds[p.user_id] || speedKmh > maxSpeeds[p.user_id]) {
-            maxSpeeds[p.user_id] = speedKmh;
-        }
+        if (!maxSpeeds[p.user_id] || speedKmh > maxSpeeds[p.user_id]) maxSpeeds[p.user_id] = speedKmh;
         userStatuses[p.user_id] = speedKmh > 1 ? 'mobile' : 'immobile';
         const color = getColor(p.user_id);
         const isMe = p.user_id === userId;
@@ -501,21 +574,18 @@ function updateMap(positions) {
         } else {
             const marker = L.marker([smooth.lat, smooth.lng], { icon: createIcon(color, p.name, bearing, isMe) }).addTo(map);
             const wa = p.whatsapp || '';
-            const popupContent = `
+            marker.bindPopup(`
                 <div style="font-family:sans-serif;min-width:200px;">
                     <b>${p.name}${isMe ? ' ⭐' : ''}</b><br>
                     <span style="color:#00d4ff;">${smooth.lat.toFixed(5)}, ${smooth.lng.toFixed(5)}</span><br>
                     🎯 Précision: ±${Math.round(p.accuracy || 0)}m<br>
                     ${speedKmh > 0.5 ? `🚀 Vitesse: ${speedKmh.toFixed(1)} km/h<br>` : ''}
                     ${wa ? `📱 WhatsApp: ${wa}<br>` : ''}
-                    ${!isMe ? `
-                        <button onclick="showRouteTo('${p.user_id}')" style="margin-top:8px;padding:6px 12px;background:#ffd700;color:#000;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🛣️ Itinéraire</button>
-                        ${wa ? `<button onclick="callWhatsAppDirect('${p.user_id}')" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#25d366;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📞 WhatsApp</button>` : ''}
-                    ` : ''}
+                    ${!isMe ? `<button onclick="showRouteTo('${p.user_id}')" style="margin-top:8px;padding:6px 12px;background:#ffd700;color:#000;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🛣️ Itinéraire</button>
+                    ${wa ? `<button onclick="callWhatsAppDirect('${p.user_id}')" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#25d366;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📞 WhatsApp</button>` : ''}` : ''}
                     <button onclick="openGoogleMaps(${smooth.lat}, ${smooth.lng})" style="margin-top:8px;margin-left:5px;padding:6px 12px;background:#4285f4;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🗺️ Maps</button>
                 </div>
-            `;
-            marker.bindPopup(popupContent);
+            `);
             markers[p.user_id] = { marker, color, name: p.name };
         }
         updateTrail(p.user_id, smooth.lat, smooth.lng, color);
@@ -534,45 +604,20 @@ function updateMap(positions) {
 // ============================================================
 // ACTIONS
 // ============================================================
-function focusUser(uid) {
-    if (markers[uid]) {
-        map.setView(markers[uid].marker.getLatLng(), 17, { animate: true });
-        markers[uid].marker.openPopup();
-    }
-}
+function focusUser(uid) { if (markers[uid]) { map.setView(markers[uid].marker.getLatLng(), 17, { animate: true }); markers[uid].marker.openPopup(); } }
 function selectUser(uid) {
     focusUser(uid);
-    if (uid !== userId) {
-        setTimeout(() => {
-            if (confirm('🛣️ Afficher l\'itinéraire vers cette personne ?')) {
-                showRouteTo(uid);
-            }
-        }, 500);
-    }
+    if (uid !== userId) setTimeout(() => { if (confirm('🛣️ Afficher l\'itinéraire ?')) showRouteTo(uid); }, 500);
 }
-function openGoogleMaps(lat, lng) {
-    window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank');
-}
+function openGoogleMaps(lat, lng) { window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank'); }
 function resetView() { map.setView([6.13, 1.22], 2, { animate: true }); }
-function followMe() {
-    if (markers[userId]) map.setView(markers[userId].marker.getLatLng(), 18, { animate: true });
-    else alert('Position en cours...');
-}
-function fitAll() {
-    const latlngs = Object.values(markers).map(m => m.marker.getLatLng());
-    if (latlngs.length > 0) map.fitBounds(latlngs, { padding: [50, 50], maxZoom: 18 });
-}
-function toggleFullscreen() {
-    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
-    else document.exitFullscreen();
-}
+function followMe() { if (markers[userId]) map.setView(markers[userId].marker.getLatLng(), 18, { animate: true }); else alert('Position en cours...'); }
+function fitAll() { const latlngs = Object.values(markers).map(m => m.marker.getLatLng()); if (latlngs.length > 0) map.fitBounds(latlngs, { padding: [50, 50], maxZoom: 18 }); }
+function toggleFullscreen() { if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); }
 function toggleSidebar() {
     const s = document.querySelector('.sidebar');
     const i = document.getElementById('toggleIcon');
-    if (s) {
-        s.classList.toggle('collapsed');
-        if (i) i.className = s.classList.contains('collapsed') ? 'fas fa-chevron-left' : 'fas fa-chevron-right';
-    }
+    if (s) { s.classList.toggle('collapsed'); if (i) i.className = s.classList.contains('collapsed') ? 'fas fa-chevron-left' : 'fas fa-chevron-right'; }
 }
 function exportGPX() {
     const h = histories[userId];
@@ -586,10 +631,7 @@ function exportGPX() {
     a.download = `trajectoire_${userId}.gpx`;
     a.click();
 }
-function updateClock() {
-    const el = document.getElementById('clock');
-    if (el) el.textContent = new Date().toLocaleTimeString('fr-FR');
-}
+function updateClock() { const el = document.getElementById('clock'); if (el) el.textContent = new Date().toLocaleTimeString('fr-FR'); }
 
 // ============================================================
 // REFRESH
@@ -621,202 +663,9 @@ async function fetchPositions() {
 // ============================================================
 updateClock();
 setInterval(updateClock, 1000);
+loadPlaces();
 startAdminSharing();
 fetchPositions();
 setInterval(fetchPositions, REFRESH_INTERVAL);
 
-console.log('%c 📍 Tracker GPS COMPLET ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
-
-// ============================================================
-// AUTO-REFRESH INTELLIGENT DE LA CARTE
-// Recharge uniquement les données, pas la page
-// ============================================================
-let autoRefreshCount = 0;
-const AUTO_REFRESH_LIMIT = 30; // Recharger complètement après 30 cycles
-
-async function autoRefreshMap() {
-    try {
-        // Récupérer les positions fraîches
-        const c = new AbortController();
-        const t = setTimeout(() => c.abort(), 10000);
-        const r = await fetch(BACKEND_URL + '/api/positions', { signal: c.signal });
-        clearTimeout(t);
-        if (!r.ok) throw new Error();
-        const data = await r.json();
-        
-        // Mettre à jour la carte et la liste
-        updateMap(data.positions);
-        updateUsersList(data.positions);
-        
-        autoRefreshCount++;
-        
-        // Tous les 30 cycles (30 sec), forcer un refresh GPS complet
-        if (autoRefreshCount >= AUTO_REFRESH_LIMIT) {
-            autoRefreshCount = 0;
-            // Redemander une position GPS fraîche
-            sendAdminPosition();
-        }
-        
-        const d = document.getElementById('liveDot');
-        if (d) d.style.background = '#28c840';
-    } catch (e) {
-        const d = document.getElementById('liveDot');
-        if (d) d.style.background = '#ff5f57';
-    }
-}
-
-// Remplacer le fetchPositions existant
-window.fetchPositions = autoRefreshMap;
-
-// ============================================================
-// SYSTÈME DE MARQUAGE DE LIEUX
-// ============================================================
-
-const PLACES_KEY = 'tracker_places';
-let places = JSON.parse(localStorage.getItem(PLACES_KEY) || '[]');
-let placeMarkers = {};
-let placeRouteControl = null;
-let placeMode = false;
-
-function loadPlaces() {
-    places.forEach(place => {
-        addPlaceToMap(place.id, place.name, place.lat, place.lng, false);
-    });
-    console.log(`📌 ${places.length} lieu(x) chargé(s)`);
-}
-
-function addPlaceToMap(id, name, lat, lng, save = true) {
-    if (placeMarkers[id]) map.removeLayer(placeMarkers[id]);
-    
-    const icon = L.divIcon({
-        className: 'place-marker-wrapper',
-        html: `<div class="place-marker"><span>📌</span></div>`,
-        iconSize: [24, 24],
-        iconAnchor: [12, 24]
-    });
-    
-    const marker = L.marker([lat, lng], { icon }).addTo(map);
-    
-    marker.bindPopup(`
-        <div class="place-popup">
-            <input type="text" id="place-name-${id}" value="${name}" placeholder="Nom du lieu">
-            <button class="btn-save" onclick="savePlace('${id}')">💾 Sauver</button>
-            <button class="btn-route" onclick="routeToPlace('${id}')">🛣️ Itinéraire</button>
-            <button class="btn-delete" onclick="deletePlace('${id}')">🗑️</button>
-        </div>
-    `);
-    
-    placeMarkers[id] = marker;
-    
-    if (save) {
-        const existing = places.findIndex(p => p.id === id);
-        if (existing === -1) {
-            places.push({ id, name, lat, lng });
-        } else {
-            places[existing] = { id, name, lat, lng };
-        }
-        localStorage.setItem(PLACES_KEY, JSON.stringify(places));
-    }
-}
-
-function savePlace(id) {
-    const input = document.getElementById(`place-name-${id}`);
-    if (!input) return;
-    const newName = input.value.trim() || 'Lieu';
-    const place = places.find(p => p.id === id);
-    if (place) {
-        place.name = newName;
-        localStorage.setItem(PLACES_KEY, JSON.stringify(places));
-        updateStatusBar(`💾 Lieu sauvegardé: ${newName}`, '#28c840');
-        map.closePopup();
-    }
-}
-
-function deletePlace(id) {
-    if (!confirm('Supprimer ce lieu ?')) return;
-    if (placeMarkers[id]) {
-        map.removeLayer(placeMarkers[id]);
-        delete placeMarkers[id];
-    }
-    places = places.filter(p => p.id !== id);
-    localStorage.setItem(PLACES_KEY, JSON.stringify(places));
-    if (placeRouteControl) {
-        map.removeControl(placeRouteControl);
-        placeRouteControl = null;
-    }
-    updateStatusBar('🗑️ Lieu supprimé', '#ff5f57');
-}
-
-function routeToPlace(id) {
-    const place = places.find(p => p.id === id);
-    if (!place) return;
-    const me = markers[userId];
-    if (!me) {
-        updateStatusBar('❌ Ta position n\'est pas détectée', '#ff5f57');
-        return;
-    }
-    if (placeRouteControl) map.removeControl(placeRouteControl);
-    const mePos = me.marker.getLatLng();
-    placeRouteControl = L.Routing.control({
-        waypoints: [
-            L.latLng(mePos.lat, mePos.lng),
-            L.latLng(place.lat, place.lng)
-        ],
-        routeWhileDragging: false,
-        addWaypoints: false,
-        fitSelectedRoutes: true,
-        showAlternatives: false,
-        lineOptions: {
-            styles: [{ color: '#ff5f57', weight: 4, opacity: 0.8 }]
-        },
-        createMarker: function() { return null; },
-        language: 'fr',
-        show: false
-    }).addTo(map);
-    placeRouteControl.on('routesfound', function(e) {
-        const route = e.routes[0];
-        const dist = (route.summary.totalDistance / 1000).toFixed(2);
-        const time = Math.round(route.summary.totalTime / 60);
-        updateStatusBar(`🛣️ Vers ${place.name}: ${dist} km — ${time} min`, '#ff5f57');
-    });
-    updateStatusBar(`🛣️ Calcul vers ${place.name}...`, '#ffbd2e');
-    map.closePopup();
-}
-
-function togglePlaceMode() {
-    placeMode = !placeMode;
-    const btn = document.getElementById('placeBtn');
-    if (btn) {
-        btn.style.background = placeMode ? 'rgba(255,95,87,.3)' : '';
-        btn.style.borderColor = placeMode ? '#ff5f57' : '';
-    }
-    updateStatusBar(
-        placeMode ? '📌 Cliquez sur la carte pour marquer un lieu' : '📍 Mode normal',
-        placeMode ? '#ff5f57' : '#ffbd2e'
-    );
-    document.body.style.cursor = placeMode ? 'crosshair' : '';
-}
-
-// Clic sur la carte en mode marquage
-map.on('click', function(e) {
-    if (!placeMode) return;
-    const id = 'place_' + Date.now();
-    const name = 'Lieu ' + (places.length + 1);
-    addPlaceToMap(id, name, e.latlng.lat, e.latlng.lng, true);
-    setTimeout(() => {
-        if (placeMarkers[id]) placeMarkers[id].openPopup();
-    }, 100);
-    placeMode = false;
-    const btn = document.getElementById('placeBtn');
-    if (btn) {
-        btn.style.background = '';
-        btn.style.borderColor = '';
-    }
-    document.body.style.cursor = '';
-    updateStatusBar('✅ Lieu créé ! Renommez-le', '#28c840');
-});
-
-// Charger les lieux au démarrage
-loadPlaces();
-
-console.log('%c 📌 Système de lieux activé ✅', 'color:#ff5f57;font-weight:bold;font-size:14px');
+console.log('%c 📍 Tracker COMPLET avec lieux ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
