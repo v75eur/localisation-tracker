@@ -1153,3 +1153,107 @@ console.log('   Précision min: 8m');
 console.log('   Moyenne sur 5 positions');
 console.log('   Timeout: 30 secondes');
 console.log('   Résultat attendu: ±3-5m');
+
+// ============================================================
+// FRÉQUENCE ADAPTATIVE SELON LA VITESSE
+// Plus tu vas vite, moins on envoie souvent
+// ============================================================
+let currentSpeedKmh = 0;
+
+function getAdaptiveInterval() {
+    if (currentSpeedKmh < 2) return 10000;       // Immobile → 10 sec
+    if (currentSpeedKmh < 10) return 1000;        // Marche → 1 sec
+    if (currentSpeedKmh < 50) return 3000;        // Vélo/Moto → 3 sec
+    return 5000;                                   // Voiture → 5 sec
+}
+
+// Modifier la fonction sendAdminPosition pour tracker la vitesse
+const originalSendAdmin2 = window.sendAdminPosition || sendAdminPosition;
+
+window.sendAdminPosition = async function() {
+    try {
+        const pos = await new Promise((res, rej) => 
+            navigator.geolocation.getCurrentPosition(res, rej, {
+                enableHighAccuracy: true, timeout: 30000, maximumAge: 0
+            })
+        );
+        
+        // Calculer la vitesse
+        currentSpeedKmh = (pos.coords.speed || 0) * 3.6;
+        
+        // Si le GPS ne donne pas la vitesse, la calculer manuellement
+        if (currentSpeedKmh === 0 && adminLastSent) {
+            const dist = calcDistance(
+                adminLastSent.lat, adminLastSent.lng,
+                pos.coords.latitude, pos.coords.longitude
+            );
+            const timeDiff = (Date.now() - (adminLastSent.time || Date.now())) / 1000;
+            if (timeDiff > 0) {
+                currentSpeedKmh = (dist / timeDiff) * 3.6;
+            }
+        }
+        
+        // Filtrer
+        const acc = pos.coords.accuracy;
+        if (acc > MAX_ACCURACY) return;
+        
+        const filtered = adminFilter.process(pos.coords.latitude, pos.coords.longitude, acc);
+        
+        // Vérifier si bougé
+        if (adminLastSent) {
+            const dist = calcDistance(adminLastSent.lat, adminLastSent.lng, filtered.lat, filtered.lng);
+            if (dist < MIN_MOVE_UPDATE) {
+                const interval = getAdaptiveInterval();
+                updateStatusBar(`📍 ${currentSpeedKmh.toFixed(1)} km/h — Stable (envoi ${interval/1000}s)`, '#ffbd2e');
+                return;
+            }
+        }
+        
+        adminLastSent = {
+            lat: filtered.lat,
+            lng: filtered.lng,
+            time: Date.now()
+        };
+        
+        const interval = getAdaptiveInterval();
+        updateStatusBar(`📍 ${currentSpeedKmh.toFixed(1)} km/h → envoi ${interval/1000}s`, '#28c840');
+        
+        await fetch(BACKEND_URL + '/api/position', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: userId, name: 'Admin', whatsapp: '',
+                lat: filtered.lat, lng: filtered.lng,
+                speed: pos.coords.speed || 0,
+                accuracy: acc,
+                heading: pos.coords.heading || 0,
+                altitude: pos.coords.altitude || 0
+            })
+        });
+    } catch (e) {
+        updateStatusBar('❌ ' + e.message, '#ff5f57');
+    }
+};
+
+// Boucle adaptative
+let adaptiveLoopTimer = null;
+function startAdaptiveLoop() {
+    if (adaptiveLoopTimer) clearTimeout(adaptiveLoopTimer);
+    
+    async function loop() {
+        await sendAdminPosition();
+        const interval = getAdaptiveInterval();
+        adaptiveLoopTimer = setTimeout(loop, interval);
+    }
+    
+    loop();
+}
+
+// Remplacer le démarrage
+window.startAdminSharing = startAdaptiveLoop;
+
+console.log('%c ⚡ VITESSE ADAPTATIVE activée', 'color:#28c840;font-weight:bold;font-size:14px');
+console.log('   Immobile  → 10 sec');
+console.log('   Marche    → 1 sec');
+console.log('   Vélo/Moto → 3 sec');
+console.log('   Voiture   → 5 sec');
