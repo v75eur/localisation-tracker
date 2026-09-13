@@ -526,3 +526,163 @@ setInterval(() => { sendAdminPosition(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { sendAdminPosition(); fetchPositions(); } });
 
 console.log('%c 📍 Tracker COMPLET ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
+
+// ============================================================
+// PRÉCISION RENFORCÉE - Version ULTRA
+// Remplace les paramètres par défaut
+// ============================================================
+const PRECISION_ULTRA = {
+    SAMPLES: 15,              // 15 échantillons (au lieu de 10)
+    MIN_ACCURACY: 25,         // Rejeter si > 25m
+    TIMEOUT: 30000,           // 30 secondes max
+    MAX_AGE: 0,               // Toujours frais
+    OUTLIER_THRESHOLD: 50,    // Rejeter si saut > 50m
+    HIGH_ACCURACY_MODE: true  // Mode haute précision
+};
+
+// Buffer amélioré
+const positionBuffers = {};
+
+function smoothPositionUltra(uid, lat, lng, accuracy) {
+    // Rejeter les positions trop imprécises
+    if (accuracy > PRECISION_ULTRA.MIN_ACCURACY) {
+        console.warn('⏳ Précision ' + Math.round(accuracy) + 'm, attente...');
+        return null;
+    }
+    
+    if (!positionBuffers[uid]) {
+        positionBuffers[uid] = [];
+    }
+    
+    const buffer = positionBuffers[uid];
+    
+    // Rejeter les outliers
+    if (buffer.length > 0) {
+        const last = buffer[buffer.length - 1];
+        const dist = calcDistance(last.lat, last.lng, lat, lng);
+        if (dist > PRECISION_ULTRA.OUTLIER_THRESHOLD) {
+            console.warn('⚠️ Outlier rejeté: ' + dist.toFixed(1) + 'm');
+            return null;
+        }
+    }
+    
+    buffer.push({ lat, lng, accuracy, time: Date.now() });
+    if (buffer.length > PRECISION_ULTRA.SAMPLES) buffer.shift();
+    
+    // Moyenne pondérée (précision^2)
+    let totalWeight = 0, weightedLat = 0, weightedLng = 0, totalAcc = 0;
+    for (const s of buffer) {
+        const weight = 1 / (s.accuracy * s.accuracy);
+        totalWeight += weight;
+        weightedLat += s.lat * weight;
+        weightedLng += s.lng * weight;
+        totalAcc += s.accuracy;
+    }
+    
+    if (totalWeight === 0) return null;
+    
+    return {
+        lat: weightedLat / totalWeight,
+        lng: weightedLng / totalWeight,
+        accuracy: totalAcc / buffer.length,
+        samples: buffer.length
+    };
+}
+
+// Géolocalisation haute précision
+function getPositionUltra() {
+    return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error('GPS non supporté')); return; }
+        
+        // Tentative 1 : haute précision avec timeout long
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                // Si précision > 25m, attendre une meilleure
+                if (pos.coords.accuracy > PRECISION_ULTRA.MIN_ACCURACY) {
+                    console.log('⏳ Précision ' + pos.coords.accuracy.toFixed(1) + 'm, attente...');
+                    setTimeout(() => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject, {
+                            enableHighAccuracy: true,
+                            timeout: PRECISION_ULTRA.TIMEOUT,
+                            maximumAge: 0
+                        });
+                    }, 2000);
+                } else {
+                    resolve(pos);
+                }
+            },
+            (err) => {
+                // Fallback
+                navigator.geolocation.getCurrentPosition(
+                    resolve, reject,
+                    { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
+                );
+            },
+            { enableHighAccuracy: true, timeout: PRECISION_ULTRA.TIMEOUT, maximumAge: 0 }
+        );
+    });
+}
+
+// Remplacer sendAdminPosition
+window.sendAdminPosition = async function() {
+    if (isSendingAdmin) return;
+    isSendingAdmin = true;
+    
+    try {
+        const pos = await getPositionUltra();
+        const acc = pos.coords.accuracy;
+        
+        const smoothed = smoothPositionUltra(userId, pos.coords.latitude, pos.coords.longitude, acc);
+        
+        if (!smoothed) {
+            const label = getAccuracyLabel(acc);
+            updateStatusBar('⏳ Recherche précision... ±' + Math.round(acc) + 'm', '#ffbd2e');
+            return;
+        }
+        
+        const filtered = adminFilter.process(smoothed.lat, smoothed.lng, smoothed.accuracy);
+        
+        if (adminLastSent) {
+            const dist = calcDistance(adminLastSent.lat, adminLastSent.lng, filtered.lat, filtered.lng);
+            if (dist < MIN_MOVE_UPDATE) {
+                const label = getAccuracyLabel(smoothed.accuracy);
+                updateStatusBar('📍 Stable ±' + smoothed.accuracy.toFixed(1) + 'm (' + smoothed.samples + '/' + PRECISION_ULTRA.SAMPLES + ' éch.)', label.color);
+                return;
+            }
+        }
+        
+        adminLastSent = filtered;
+        const label = getAccuracyLabel(smoothed.accuracy);
+        updateStatusBar('📍 ±' + smoothed.accuracy.toFixed(1) + 'm — ' + label.text + ' (' + smoothed.samples + '/' + PRECISION_ULTRA.SAMPLES + ')', label.color);
+        
+        await fetch(BACKEND_URL + '/api/position', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: userId, name: 'Admin', whatsapp: '',
+                lat: filtered.lat, lng: filtered.lng,
+                speed: pos.coords.speed || 0,
+                accuracy: smoothed.accuracy,
+                heading: pos.coords.heading || 0,
+                altitude: pos.coords.altitude || 0
+            })
+        });
+    } catch (e) {
+        updateStatusBar('❌ ' + e.message, '#ff5f57');
+    } finally {
+        isSendingAdmin = false;
+    }
+};
+
+// Remplacer startAdminSharing avec intervalle plus court pour Admin
+window.startAdminSharing = function() {
+    if (adminInterval) clearInterval(adminInterval);
+    sendAdminPosition();
+    adminInterval = setInterval(sendAdminPosition, 1500); // 1.5 sec au lieu de 2
+};
+
+console.log('%c 🎯 PRÉCISION ULTRA activée ✅', 'color:#28c840;font-weight:bold;font-size:14px');
+console.log('   Échantillons: ' + PRECISION_ULTRA.SAMPLES);
+console.log('   Précision min: ±' + PRECISION_ULTRA.MIN_ACCURACY + 'm');
+console.log('   Timeout: ' + (PRECISION_ULTRA.TIMEOUT/1000) + 's');
+console.log('   Envoi: 1.5 sec');
