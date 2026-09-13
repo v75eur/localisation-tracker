@@ -95,7 +95,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
         right:.3rem;
         left:.3rem;
         width:auto;
-        max-height:35vh;
+        max-height:25vh;
     }
     .sidebar.collapsed{
         width:auto;
