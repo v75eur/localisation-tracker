@@ -498,3 +498,8 @@ setInterval(() => { sendAdminPosition(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { sendAdminPosition(); fetchPositions(); } });
 
 console.log('%c 📍 Tracker COMPLET ✅', 'color:#00d4ff;font-weight:bold;font-size:14px');
+
+function toggleSidebarMobile() {
+    const s = document.querySelector('.sidebar');
+    if (s) s.classList.toggle('open');
+}
