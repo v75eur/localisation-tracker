@@ -74,11 +74,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
    ═══════════════════════════════════════════ */
 
 /* Sur mobile, le panneau ne doit PAS recouvrir les boutons */
-
-/* ═══════════════════════════════════════════
-   MOBILE - Panneau réduit, boutons visibles
-   ═══════════════════════════════════════════ */
 @media(max-width:768px){
+    /* Boutons plus compacts */
     .map-buttons{
         top:60px;
         left:.3rem;
@@ -86,11 +83,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
         max-height:calc(100vh - 70px);
     }
     .map-buttons button{
-        width:36px;
-        height:36px;
+        width:34px;
+        height:34px;
         font-size:.85rem;
     }
     
+    /* Panneau en bas, mais avec limite */
     .sidebar{
         top:auto;
         bottom:.3rem;
@@ -98,28 +96,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
         left:.3rem;
         width:auto;
         max-height:25vh;
-        border-radius:12px;
-        padding:.6rem;
     }
     .sidebar.collapsed{
-        max-height:40px;
-        padding:.3rem .6rem;
+        width:auto;
+        max-height:50px;
     }
-    .sidebar-header{margin-bottom:.4rem}
-    .sidebar-header h2{font-size:.7rem}
     
-    .filters-bar{padding:.3rem 0;margin-bottom:.4rem}
-    .filter-btn{font-size:.55rem;padding:.2rem .5rem}
-    .sort-bar{padding:.2rem 0;margin-bottom:.4rem}
-    .sort-btn{font-size:.5rem;padding:.15rem .4rem}
-    
-    .user-item{padding:.5rem;margin-bottom:.3rem}
-    .user-item .avatar{width:32px;height:32px;font-size:.75rem}
-    .user-item .name{font-size:.75rem}
-    .user-item .address{font-size:.55rem}
-    .user-item .coords{font-size:.5rem}
-    .user-item .meta{font-size:.5rem}
-    
+    /* Barre de statut plus haute */
     .status-bar{
         bottom:auto;
         top:55px;
@@ -127,17 +110,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
         left:auto;
         font-size:.6rem;
         max-width:200px;
-        padding:.3rem .6rem;
     }
 }
 
+/* Sur très petit écran, réduire encore */
 @media(max-width:480px){
     .map-buttons button{
-        width:32px;
-        height:32px;
-        font-size:.7rem;
+        width:30px;
+        height:30px;
+        font-size:.75rem;
     }
     .sidebar{
-        max-height:22vh;
+        max-height:30vh;
     }
 }
